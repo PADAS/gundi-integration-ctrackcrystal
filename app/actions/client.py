@@ -196,7 +196,7 @@ async def retrieve_token(integration: Integration, base_url: str) -> CTCLoginRes
     # Check if token is expired or about to expire in the next 5 minutes
     if datetime.now(timezone.utc) >= token.validToUtc - timedelta(minutes=5):
         if auth_config is None:
-            auth_config = await get_auth_config(integration)
+            auth_config = get_auth_config(integration)
         token = await refresh_token(
             integration_id,
             base_url,
