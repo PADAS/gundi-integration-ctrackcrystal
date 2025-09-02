@@ -103,7 +103,7 @@ async def test_action_pull_observations_no_vehicles(mocker, mock_publish_event):
 
 
 @pytest.mark.asyncio
-async def test_action_fetch_vehicle_trips_success(mocker):
+async def test_action_fetch_vehicle_trips_success(mocker, mock_publish_event):
     integration = MagicMock()
     integration.id = "integration_id"
     integration.base_url = None
@@ -126,6 +126,10 @@ async def test_action_fetch_vehicle_trips_success(mocker):
         )
     ]
     trips_response = AsyncMock(payload=trips_payload)
+
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
 
     mocker.patch("app.actions.handlers.get_auth_config", return_value=auth_config)
     mock_get_vehicle_trips = mocker.patch(
@@ -150,7 +154,7 @@ async def test_action_fetch_vehicle_trips_success(mocker):
 
 
 @pytest.mark.asyncio
-async def test_action_fetch_vehicle_trips_exception(mocker):
+async def test_action_fetch_vehicle_trips_exception(mocker, mock_publish_event):
     integration = AsyncMock()
     integration.id = "integration_id"
     integration.base_url = None
@@ -166,6 +170,10 @@ async def test_action_fetch_vehicle_trips_exception(mocker):
 
     mocker.patch("app.actions.handlers.get_auth_config", return_value=auth_config)
     mocker.patch("app.actions.client.get_vehicle_trips", side_effect=Exception("fail"))
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
+
     mock_log_action_activity = mocker.patch("app.actions.handlers.log_action_activity", new_callable=AsyncMock)
 
     result = await handlers.action_fetch_vehicle_trips(integration, action_config)
