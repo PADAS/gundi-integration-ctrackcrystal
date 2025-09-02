@@ -107,7 +107,7 @@ async def action_fetch_vehicle_trips(integration, action_config: PullVehicleTrip
     transformed_data = []
 
     # Get trips from today by default
-    filter_day = datetime.now(timezone.utc) - timedelta(days=1)
+    filter_day = datetime.now(timezone.utc)
 
     try:
         if trips_response := await client.get_vehicle_trips(
@@ -155,6 +155,7 @@ async def action_fetch_vehicle_trips(integration, action_config: PullVehicleTrip
                     observations_extracted += len(response)
 
                 # Save latest device updated_at
+                latest_time = max(transformed_data, key=lambda obs: obs["recorded_at"])["recorded_at"]
                 state = {"updated_at": latest_time.isoformat()}
 
                 await state_manager.set_state(

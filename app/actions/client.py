@@ -245,7 +245,7 @@ async def get_token(
                 return CTCLoginResponse.parse_obj(parsed_response)
             else:
                 logger.warning( f"-- Login failed for integration ID: {integration_id} Username: {username} --")
-                return ""
+                return None
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 raise CTCUnauthorizedException("Unauthorized access", e)
@@ -284,7 +284,7 @@ async def refresh_token(
                 return CTCLoginResponse.parse_obj(parsed_response)
             else:
                 logger.warning(f"-- Token refresh failed for integration ID: {integration_id} --")
-                return ""
+                return None
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 raise CTCUnauthorizedException("Unauthorized access", e)
@@ -331,7 +331,7 @@ async def get_vehicles(
                 return CTCGetVehiclesResponse.parse_obj(parsed_response)
             else:
                 logger.warning(f"-- No vehicles returned for integration ID: {integration.id}: {response.text}  --")
-                return []
+                return CTCGetVehiclesResponse()
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 raise CTCUnauthorizedException("Unauthorized access", e)
@@ -385,7 +385,7 @@ async def get_vehicle_trips(
                 return CTCTripsResponse.parse_obj(parsed_response)
             else:
                 logger.warning(f"-- No trips returned for integration ID: {integration.id}: Vehicle ID {vehicle_id}: {response.text}  --")
-                return []
+                return CTCTripsResponse()
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 raise CTCUnauthorizedException("Unauthorized access", e)
@@ -437,7 +437,7 @@ async def get_trip_summary(
                 return CTCDetailedTripSummaryResponse.parse_obj(parsed_response)
             else:
                 logger.warning(f"-- No trip summary returned for integration ID: {integration.id}: Vehicle ID {vehicle_id}: {response.text}  --")
-                return []
+                return CTCDetailedTripSummaryResponse()
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 raise CTCUnauthorizedException("Unauthorized access", e)
