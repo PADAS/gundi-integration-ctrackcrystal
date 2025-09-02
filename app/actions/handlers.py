@@ -155,8 +155,7 @@ async def action_fetch_vehicle_trips(integration, action_config: PullVehicleTrip
                     observations_extracted += len(response)
 
                 # Save latest device updated_at
-                latest_time = max(transformed_data, key=lambda obs: obs["recorded_at"])["recorded_at"]
-                state = {"updated_at": latest_time.strftime("%Y-%m-%dT%H:%M:%S")}
+                state = {"updated_at": latest_time.isoformat()}
 
                 await state_manager.set_state(
                     integration_id=integration.id,
