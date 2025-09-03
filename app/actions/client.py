@@ -27,8 +27,10 @@ class UTCNormalizedModel(pydantic.BaseModel):
 
 class CTCLoginResponse(UTCNormalizedModel):
     jwt: str
-    validToUtc: datetime
-
+    valid_to_utc: datetime = Field(..., alias="validToUtc")
+    
+    class Config:
+        allow_population_by_field_name = True
 
 class CTCDevicesList(pydantic.BaseModel):
     id: Optional[str]
