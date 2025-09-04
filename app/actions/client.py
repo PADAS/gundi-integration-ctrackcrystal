@@ -131,44 +131,37 @@ class CTCGetVehiclesResponse(pydantic.BaseModel):
     vehicles: List[CTCVehicle] = pydantic.Field(default_factory=list)
 
 
-class CTCTooManyRequestsException(Exception):
+class CTCBaseException(Exception):
+    def __init__(self, message: str, error: Exception = None, status_code: int = None):
+        self.status_code = status_code
+        self.message = message
+        self.error = error
+        super().__init__(f"'{self.status_code}: {self.message}, Error: {self.error}'")
+
+
+class CTCTooManyRequestsException(CTCBaseException):
     def __init__(self, message: str, error: Exception = None, status_code=429):
-        self.status_code = status_code
-        self.message = message
-        self.error = error
-        super().__init__(f"'{self.status_code}: {self.message}, Error: {self.error}'")
+        super().__init__(message, error, status_code)
 
 
-class CTCNotFoundException(Exception):
+class CTCNotFoundException(CTCBaseException):
     def __init__(self, message: str, error: Exception = None, status_code=404):
-        self.status_code = status_code
-        self.message = message
-        self.error = error
-        super().__init__(f"'{self.status_code}: {self.message}, Error: {self.error}'")
+        super().__init__(message, error, status_code)
 
 
-class CTCUnauthorizedException(Exception):
+class CTCUnauthorizedException(CTCBaseException):
     def __init__(self, message: str, error: Exception = None, status_code=401):
-        self.status_code = status_code
-        self.message = message
-        self.error = error
-        super().__init__(f"'{self.status_code}: {self.message}, Error: {self.error}'")
+        super().__init__(message, error, status_code)
 
 
-class CTCForbiddenException(Exception):
+class CTCForbiddenException(CTCBaseException):
     def __init__(self, message: str, error: Exception = None, status_code=403):
-        self.status_code = status_code
-        self.message = message
-        self.error = error
-        super().__init__(f"'{self.status_code}: {self.message}, Error: {self.error}'")
+        super().__init__(message, error, status_code)
 
 
-class CTCInternalServerException(Exception):
+class CTCInternalServerException(CTCBaseException):
     def __init__(self, message: str, error: Exception = None, status_code=500):
-        self.status_code = status_code
-        self.message = message
-        self.error = error
-        super().__init__(f"'{self.status_code}: {self.message}, Error: {self.error}'")
+        super().__init__(message, error, status_code)
 
 
 def _get_retry_after(exc):
