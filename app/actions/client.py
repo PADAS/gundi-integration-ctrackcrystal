@@ -132,36 +132,49 @@ class CTCGetVehiclesResponse(pydantic.BaseModel):
 
 
 class CTCBaseException(Exception):
+    default_status_code: int = None
+
     def __init__(self, message: str, error: Exception = None, status_code: int = None):
-        self.status_code = status_code
+        self.status_code = status_code if status_code is not None else self.default_status_code
         self.message = message
         self.error = error
-        super().__init__(f"'{self.status_code}: {self.message}, Error: {self.error}'")
+        super().__init__(message)
+
+    def __str__(self):
+        return f"{self.status_code}: {self.message}, Error: {self.error}"
 
 
 class CTCTooManyRequestsException(CTCBaseException):
-    def __init__(self, message: str, error: Exception = None, status_code=429):
-        super().__init__(message, error, status_code)
+    default_status_code = 429
 
 
 class CTCNotFoundException(CTCBaseException):
-    def __init__(self, message: str, error: Exception = None, status_code=404):
-        super().__init__(message, error, status_code)
+    default_status_code = 404
 
 
 class CTCUnauthorizedException(CTCBaseException):
-    def __init__(self, message: str, error: Exception = None, status_code=401):
-        super().__init__(message, error, status_code)
+    default_status_code = 401
 
 
 class CTCForbiddenException(CTCBaseException):
-    def __init__(self, message: str, error: Exception = None, status_code=403):
-        super().__init__(message, error, status_code)
+    default_status_code = 403
 
 
 class CTCInternalServerException(CTCBaseException):
-    def __init__(self, message: str, error: Exception = None, status_code=500):
-        super().__init__(message, error, status_code)
+    default_status_code = 500
+
+
+def handle_httpx_error(e):
+    status = e.response.status_code
+    if status == 401:
+        raise CTCUnauthorizedException("Unauthorized access", e) from e
+    if status == 403:
+        raise CTCForbiddenException("Forbidden access", e) from e
+    if status == 429:
+        raise CTCTooManyRequestsException("Rate Limit reached", e) from e
+    if status == 500:
+        raise CTCInternalServerException("Internal server error", e) from e
+    raise e
 
 
 def _get_retry_after(exc):
@@ -228,15 +241,7 @@ async def get_token(
                 logger.warning(f"-- Get token failed for username: {username}: {response.text}  --")
                 return None
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                raise CTCUnauthorizedException("Unauthorized access", e)
-            if e.response.status_code == 403:
-                raise CTCForbiddenException("Forbidden access", e)
-            if e.response.status_code == 429:
-                raise CTCTooManyRequestsException("Rate Limit reached", e)
-            elif e.response.status_code == 500:
-                raise CTCInternalServerException("Internal server error", e)
-            raise e
+            handle_httpx_error(e)
 
 
 @backoff.on_exception(
@@ -271,15 +276,7 @@ async def refresh_token(
             else:
                 return None
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                raise CTCUnauthorizedException("Unauthorized access", e)
-            if e.response.status_code == 403:
-                raise CTCForbiddenException("Forbidden access", e)
-            if e.response.status_code == 429:
-                raise CTCTooManyRequestsException("Rate Limit reached", e)
-            elif e.response.status_code == 500:
-                raise CTCInternalServerException("Internal server error", e)
-            raise e
+            handle_httpx_error(e)
 
 
 @backoff.on_exception(
@@ -314,15 +311,7 @@ async def get_vehicles(
             else:
                 return CTCGetVehiclesResponse()
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                raise CTCUnauthorizedException("Unauthorized access", e)
-            if e.response.status_code == 403:
-                raise CTCForbiddenException("Forbidden access", e)
-            if e.response.status_code == 429:
-                raise CTCTooManyRequestsException("Rate Limit reached", e)
-            elif e.response.status_code == 500:
-                raise CTCInternalServerException("Internal server error", e)
-            raise e
+            handle_httpx_error(e)
 
 
 @backoff.on_exception(
@@ -364,15 +353,7 @@ async def get_vehicle_trips(
             else:
                 return CTCTripsResponse()
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                raise CTCUnauthorizedException("Unauthorized access", e)
-            if e.response.status_code == 403:
-                raise CTCForbiddenException("Forbidden access", e)
-            if e.response.status_code == 429:
-                raise CTCTooManyRequestsException("Rate Limit reached", e)
-            elif e.response.status_code == 500:
-                raise CTCInternalServerException("Internal server error", e)
-            raise e
+            handle_httpx_error(e)
 
 
 @backoff.on_exception(
@@ -411,12 +392,4 @@ async def get_trip_summary(
             else:
                 return CTCDetailedTripSummaryResponse()
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                raise CTCUnauthorizedException("Unauthorized access", e)
-            if e.response.status_code == 403:
-                raise CTCForbiddenException("Forbidden access", e)
-            if e.response.status_code == 429:
-                raise CTCTooManyRequestsException("Rate Limit reached", e)
-            elif e.response.status_code == 500:
-                raise CTCInternalServerException("Internal server error", e)
-            raise e
+            handle_httpx_error(e)
