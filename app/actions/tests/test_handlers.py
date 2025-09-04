@@ -106,6 +106,8 @@ async def test_action_pull_observations_no_vehicles(mocker, mock_publish_event):
     mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
     mocker.patch("app.actions.handlers.get_auth_config", return_value=auth_config)
     mocker.patch("app.actions.client.get_vehicles", return_value=None)
+    mocker.patch("app.actions.handlers.state_manager.get_state", new_callable=AsyncMock, return_value=None)
+    mocker.patch("app.actions.handlers.state_manager.set_state", new_callable=AsyncMock)
 
     result = await handlers.action_pull_observations(integration, PullObservationsConfig())
 
