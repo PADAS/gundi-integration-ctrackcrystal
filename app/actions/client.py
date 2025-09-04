@@ -3,17 +3,11 @@ import httpx
 import pydantic
 import logging
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import List, Optional
-
-from gundi_core.schemas.v2 import Integration
-
-from app.actions.configurations import get_auth_config
-from app.services.state import IntegrationStateManager
 
 
 logger = logging.getLogger(__name__)
-state_manager = IntegrationStateManager()
 
 
 class UTCNormalizedModel(pydantic.BaseModel):
@@ -27,96 +21,114 @@ class UTCNormalizedModel(pydantic.BaseModel):
 
 class CTCLoginResponse(UTCNormalizedModel):
     jwt: str
-    valid_to_utc: datetime = Field(..., alias="validToUtc")
+    valid_to_utc: datetime = pydantic.Field(..., alias="validToUtc")
     
     class Config:
         allow_population_by_field_name = True
 
 class CTCDevicesList(pydantic.BaseModel):
-    id: Optional[str]
-    unitType: Optional[str]
-    hardwareType: Optional[str]
+    id: Optional[str] = None
+    unit_type: Optional[str] = pydantic.Field(default=None, alias="unitType")
+    hardware_type: Optional[str] = pydantic.Field(default=None, alias="hardwareType")
+
+    class Config:
+        allow_population_by_field_name = True
 
 
 class CTCVehicle(UTCNormalizedModel):
     id: str
-    serialNumber: str
-    displayName: str
-    fleetNumber: Optional[str]
-    registrationNumber: Optional[str]
-    vin: Optional[str]
-    make: Optional[str]
-    model: Optional[str]
-    color: Optional[str]
-    driverId: Optional[str]
-    odometer: Optional[int]
-    runningHours: Optional[int]
-    firstStartUpTime: Optional[datetime]
-    lastReportedTime: Optional[datetime]
-    devicesList: Optional[List[CTCDevicesList]]
+    serial_number: str = pydantic.Field(alias="serialNumber")
+    display_name: str = pydantic.Field(alias="displayName")
+    fleet_number: Optional[str] = pydantic.Field(default=None, alias="fleetNumber")
+    registration_number: Optional[str] = pydantic.Field(default=None, alias="registrationNumber")
+    vin: Optional[str] = None
+    make: Optional[str] = None
+    model: Optional[str] = None
+    color: Optional[str] = None
+    driver_id: Optional[str] = pydantic.Field(default=None, alias="driverId")
+    odometer: Optional[int] = None
+    running_hours: Optional[int] = pydantic.Field(default=None, alias="runningHours")
+    first_start_up_time: Optional[datetime] = pydantic.Field(default=None, alias="firstStartUpTime")
+    last_reported_time: Optional[datetime] = pydantic.Field(default=None, alias="lastReportedTime")
+    devices_list: Optional[List[CTCDevicesList]] = pydantic.Field(default=None, alias="devicesList")
+
+    class Config:
+        allow_population_by_field_name = True
 
 
 class CTCTripDetail(UTCNormalizedModel):
     date: datetime
-    tripId: str
-    tripStartTime: Optional[datetime]
-    tripendTime: Optional[datetime]
-    distanceDriven: Optional[float]
-    currentDistance: Optional[float]
-    runningDistance: Optional[float]
-    runningDuration: Optional[float]
-    driveTime: Optional[float]
-    idleTime: Optional[float]
-    maxSpeed: Optional[float]
-    stopTime: Optional[float]
-    tripMode: Optional[str]
-    tripStartLatitude: Optional[str]
-    tripStartLongitude: Optional[str]
-    tripEndLatitude: Optional[str]
-    tripEndLongitude: Optional[str]
-    startLocationDetail: Optional[str]
-    endLocationDetail: Optional[str]
+    trip_id: str = pydantic.Field(alias="tripId")
+    trip_start_time: Optional[datetime] = pydantic.Field(default=None, alias="tripStartTime")
+    trip_end_time: Optional[datetime] = pydantic.Field(default=None, alias="tripendTime")
+    distance_driven: Optional[float] = pydantic.Field(default=None, alias="distanceDriven")
+    current_distance: Optional[float] = pydantic.Field(default=None, alias="currentDistance")
+    running_distance: Optional[float] = pydantic.Field(default=None, alias="runningDistance")
+    running_duration: Optional[float] = pydantic.Field(default=None, alias="runningDuration")
+    drive_time: Optional[float] = pydantic.Field(default=None, alias="driveTime")
+    idle_time: Optional[float] = pydantic.Field(default=None, alias="idleTime")
+    max_speed: Optional[float] = pydantic.Field(default=None, alias="maxSpeed")
+    stop_time: Optional[float] = pydantic.Field(default=None, alias="stopTime")
+    trip_mode: Optional[str] = pydantic.Field(default=None, alias="tripMode")
+    trip_start_latitude: Optional[str] = pydantic.Field(default=None, alias="tripStartLatitude")
+    trip_start_longitude: Optional[str] = pydantic.Field(default=None, alias="tripStartLongitude")
+    trip_end_latitude: Optional[str] = pydantic.Field(default=None, alias="tripEndLatitude")
+    trip_end_longitude: Optional[str] = pydantic.Field(default=None, alias="tripEndLongitude")
+    start_location_detail: Optional[str] = pydantic.Field(default=None, alias="startLocationDetail")
+    end_location_detail: Optional[str] = pydantic.Field(default=None, alias="endLocationDetail")
+
+    class Config:
+        allow_population_by_field_name = True
 
 
 class CTCTrip(pydantic.BaseModel):
     id: str
-    tripCount: Optional[int]
-    totalDistance: Optional[float]
-    totalStopTime: Optional[float]
-    totalIdleTime: Optional[float]
-    totalDriveTime: Optional[float]
-    totalViolationCount: Optional[float]
-    maxSpeed: Optional[float]
-    averageDailyDistance: Optional[float]
-    averageVehicleDistance: Optional[float]
+    trip_count: Optional[int] = pydantic.Field(default=None, alias="tripCount")
+    total_distance: Optional[float] = pydantic.Field(default=None, alias="totalDistance")
+    total_stop_time: Optional[float] = pydantic.Field(default=None, alias="totalStopTime")
+    total_idle_time: Optional[float] = pydantic.Field(default=None, alias="totalIdleTime")
+    total_drive_time: Optional[float] = pydantic.Field(default=None, alias="totalDriveTime")
+    total_violation_count: Optional[float] = pydantic.Field(default=None, alias="totalViolationCount")
+    max_speed: Optional[float] = pydantic.Field(default=None, alias="maxSpeed")
+    average_daily_distance: Optional[float] = pydantic.Field(default=None, alias="averageDailyDistance")
+    average_vehicle_distance: Optional[float] = pydantic.Field(default=None, alias="averageVehicleDistance")
     details: List[CTCTripDetail]
+
+    class Config:
+        allow_population_by_field_name = True
 
 
 class CTCLocationSummary(UTCNormalizedModel):
-    eventId: Optional[int]
-    eventTime: datetime
-    eventText: Optional[str]
+    event_id: Optional[int] = pydantic.Field(default=None, alias="eventId")
+    event_time: datetime = pydantic.Field(alias="eventTime")
+    event_text: Optional[str] = pydantic.Field(default=None, alias="eventText")
     latitude: float
     longitude: float
-    speed: Optional[float]
-    distance: Optional[float]
-    heading: Optional[int]
-    direction: Optional[str]
-    runningDistance: Optional[float]
+    speed: Optional[float] = None
+    distance: Optional[float] = None
+    heading: Optional[int] = None
+    direction: Optional[str] = None
+    running_distance: Optional[float] = pydantic.Field(default=None, alias="runningDistance")
+
+    class Config:
+        allow_population_by_field_name = True
 
 
 class CTCDetailedTripSummaryResponse(pydantic.BaseModel):
-    locationSummary: List[CTCLocationSummary]
+    location_summary: List[CTCLocationSummary] = pydantic.Field(default_factory=list, alias="locationSummary")
+
+    class Config:
+        allow_population_by_field_name = True
 
 
 class CTCTripsResponse(pydantic.BaseModel):
-    count: int
-    payload: List[CTCTrip]
+    count: int = 0
+    payload: List[CTCTrip] = pydantic.Field(default_factory=list)
 
 
 class CTCGetVehiclesResponse(pydantic.BaseModel):
-    count: int
-    vehicles: List[CTCVehicle]
+    count: int = 0
+    vehicles: List[CTCVehicle] = pydantic.Field(default_factory=list)
 
 
 class CTCTooManyRequestsException(Exception):
@@ -163,68 +175,42 @@ def _get_retry_after(exc):
     """Extract Retry-After header value in seconds from exception."""
     retry_after = 0
     try:
-        retry_after_header = exc.response.headers.get("Retry-After")
+        retry_after_header = exc.error.response.headers.get("Retry-After")
         if retry_after_header:
             retry_after = int(retry_after_header)
     except Exception:
-        retry_after = 1
+        retry_after = 10
     return retry_after
 
-async def retrieve_token(integration: Integration, base_url: str) -> CTCLoginResponse:
-    """
-        Helper function to retrieve token from state or CTC API.
-    """
-    integration_id = str(integration.id)
 
-    saved_token = await state_manager.get_state(
-        integration_id,
-        "auth",
-        "token"
-    )
+def make_retry_after_wait_gen():
+    last_exc = {"exc": None}
+    def on_backoff(details):
+        last_exc["exc"] = details["exception"]
+    def wait_gen():
+        while True:
+            exc = last_exc["exc"]
+            yield _get_retry_after(exc) if exc else 10
+    return wait_gen, on_backoff
 
-    auth_config = None
-    if not saved_token:
-        auth_config = get_auth_config(integration)
-        token = await get_token(
-            integration_id,
-            base_url,
-            auth_config.username,
-            auth_config.password,
-            auth_config.subscription_key
-        )
-    else:
-        token = CTCLoginResponse.parse_obj(saved_token)
 
-    # Check if token is expired or about to expire in the next 5 minutes
-    if datetime.now(timezone.utc) >= token.validToUtc - timedelta(minutes=5):
-        if auth_config is None:
-            auth_config = get_auth_config(integration)
-        token = await refresh_token(
-            integration_id,
-            base_url,
-            token.jwt,
-            auth_config.subscription_key
-        )
+wait_gen, on_backoff_cb = make_retry_after_wait_gen()
 
-    await state_manager.set_state(
-        integration_id,
-        "auth",
-        {"jwt": token.jwt, "validToUtc": token.validToUtc.isoformat()},
-        "token"
-    )
 
-    return token
-
+@backoff.on_exception(
+    wait_gen=wait_gen,
+    exception=CTCTooManyRequestsException,
+    max_tries=3,
+    jitter=None,
+    on_backoff=on_backoff_cb
+)
 async def get_token(
-        integration_id: str,
         base_url: str,
         username: str,
         password: pydantic.SecretStr,
         subscription_key: pydantic.SecretStr
 ) -> CTCLoginResponse:
     async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=15.0, pool=5.0)) as session:
-        logger.info(f"-- Getting token for integration ID: {integration_id} Username: {username} --")
-
         url = f"{base_url}/Authenticate/Login"
 
         headers = {
@@ -246,7 +232,7 @@ async def get_token(
             if parsed_response:
                 return CTCLoginResponse.parse_obj(parsed_response)
             else:
-                logger.warning( f"-- Login failed for integration ID: {integration_id} Username: {username} --")
+                logger.warning(f"-- Get token failed for username: {username}: {response.text}  --")
                 return None
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
@@ -259,15 +245,20 @@ async def get_token(
                 raise CTCInternalServerException("Internal server error", e)
             raise e
 
+
+@backoff.on_exception(
+    wait_gen=wait_gen,
+    exception=CTCTooManyRequestsException,
+    max_tries=3,
+    jitter=None,
+    on_backoff=on_backoff_cb
+)
 async def refresh_token(
-        integration_id: str,
         base_url: str,
         token: str,
         subscription_key: pydantic.SecretStr
 ) -> CTCLoginResponse:
     async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=15.0, pool=5.0)) as session:
-        logger.info(f"-- Refreshing token for integration ID: {integration_id} --")
-
         url = f"{base_url}/Authenticate/RefreshToken"
 
         headers = {
@@ -285,7 +276,6 @@ async def refresh_token(
             if parsed_response:
                 return CTCLoginResponse.parse_obj(parsed_response)
             else:
-                logger.warning(f"-- Token refresh failed for integration ID: {integration_id} --")
                 return None
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
@@ -298,29 +288,26 @@ async def refresh_token(
                 raise CTCInternalServerException("Internal server error", e)
             raise e
 
+
 @backoff.on_exception(
-        backoff.constant,
-        CTCTooManyRequestsException,
-        max_tries=3,
-        jitter=None,
-        interval=lambda e: _get_retry_after(e)
+    wait_gen=wait_gen,
+    exception=CTCTooManyRequestsException,
+    max_tries=3,
+    jitter=None,
+    on_backoff=on_backoff_cb
 )
 async def get_vehicles(
-        integration: Integration,
+        token: str,
         subscription_key: pydantic.SecretStr,
         base_url: str
 ) -> CTCGetVehiclesResponse:
     async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=15.0, pool=5.0)) as session:
-        logger.info(f"-- Getting vehicles for integration ID: {integration.id} --")
-
         url = f"{base_url}/Vehicle/GetVehicles"
-
-        token = await retrieve_token(integration, base_url)
 
         headers = {
             "Content-Type": "application/json",
             "Ocp-Apim-Subscription-Key": subscription_key.get_secret_value(),
-            "x-token": token.jwt
+            "x-token": token
         }
 
         try:
@@ -332,7 +319,6 @@ async def get_vehicles(
             if parsed_response:
                 return CTCGetVehiclesResponse.parse_obj(parsed_response)
             else:
-                logger.warning(f"-- No vehicles returned for integration ID: {integration.id}: {response.text}  --")
                 return CTCGetVehiclesResponse()
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
@@ -345,31 +331,28 @@ async def get_vehicles(
                 raise CTCInternalServerException("Internal server error", e)
             raise e
 
+
 @backoff.on_exception(
-        backoff.constant,
-        CTCTooManyRequestsException,
-        max_tries=3,
-        jitter=None,
-        interval=lambda e: _get_retry_after(e)
+    wait_gen=wait_gen,
+    exception=CTCTooManyRequestsException,
+    max_tries=3,
+    jitter=None,
+    on_backoff=on_backoff_cb
 )
 async def get_vehicle_trips(
-        integration: Integration,
+        token: str,
         subscription_key: pydantic.SecretStr,
         base_url: str,
         vehicle_id: str,
         filter_day: datetime
 ) -> CTCTripsResponse:
     async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=15.0, pool=5.0)) as session:
-        logger.info(f"-- Getting vehicle trips for integration ID: {integration.id} Vehicle ID: {vehicle_id} --")
-
         url = f"{base_url}/Vehicle/Trips"
-
-        token = await retrieve_token(integration, base_url)
 
         headers = {
             "Content-Type": "application/json",
             "Ocp-Apim-Subscription-Key": subscription_key.get_secret_value(),
-            "x-token": token.jwt
+            "x-token": token
         }
 
         try:
@@ -386,7 +369,6 @@ async def get_vehicle_trips(
             if parsed_response:
                 return CTCTripsResponse.parse_obj(parsed_response)
             else:
-                logger.warning(f"-- No trips returned for integration ID: {integration.id}: Vehicle ID {vehicle_id}: {response.text}  --")
                 return CTCTripsResponse()
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
@@ -399,31 +381,27 @@ async def get_vehicle_trips(
                 raise CTCInternalServerException("Internal server error", e)
             raise e
 
+
 @backoff.on_exception(
-        backoff.constant,
-        CTCTooManyRequestsException,
-        max_tries=3,
-        jitter=None,
-        interval=lambda e: _get_retry_after(e)
+    wait_gen=wait_gen,
+    exception=CTCTooManyRequestsException,
+    max_tries=3,
+    jitter=None,
+    on_backoff=on_backoff_cb
 )
 async def get_trip_summary(
-        integration: Integration,
+        token: str,
         subscription_key: pydantic.SecretStr,
         base_url: str,
-        vehicle_id: str,
         trip_id: str
 ) -> CTCDetailedTripSummaryResponse:
     async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=15.0, pool=5.0)) as session:
-        logger.info(f"-- Getting trip {trip_id} summary for integration ID: {integration.id} Vehicle ID: {vehicle_id} --")
-
         url = f"{base_url}/Vehicle/DetailedTripSummary/{trip_id}"
-
-        token = await retrieve_token(integration, base_url)
 
         headers = {
             "Content-Type": "application/json",
             "Ocp-Apim-Subscription-Key": subscription_key.get_secret_value(),
-            "x-token": token.jwt
+            "x-token": token
         }
 
         try:
@@ -438,7 +416,6 @@ async def get_trip_summary(
             if parsed_response:
                 return CTCDetailedTripSummaryResponse.parse_obj(parsed_response)
             else:
-                logger.warning(f"-- No trip summary returned for integration ID: {integration.id}: Vehicle ID {vehicle_id}: {response.text}  --")
                 return CTCDetailedTripSummaryResponse()
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:

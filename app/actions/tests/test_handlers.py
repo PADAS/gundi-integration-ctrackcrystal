@@ -1,4 +1,5 @@
 import pytest
+import pydantic
 from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime, timezone, timedelta
 
@@ -21,7 +22,6 @@ async def test_action_auth_success(mocker):
     result = await handlers.action_auth(integration, action_config)
 
     mock_get_token.assert_awaited_once_with(
-        integration.id,
         handlers.CTC_BASE_URL,
         action_config.username,
         action_config.password,
@@ -55,9 +55,15 @@ async def test_action_pull_observations_triggers_fetch_vehicle_trips_action(mock
     integration.base_url = None
 
     auth_config = MagicMock()
-    auth_config.subscription_key = "key"
+    auth_config.subscription_key = pydantic.SecretStr("key")
     auth_config.username = "user"
+    auth_config.password = pydantic.SecretStr("pass")
 
+    mock_token = MagicMock()
+    mock_token.jwt = "token_jwt"
+    mock_token.valid_to_utc = datetime.now(timezone.utc) + timedelta(hours=1)
+
+    mocker.patch("app.actions.client.get_token", return_value=mock_token)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
     mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
@@ -67,14 +73,13 @@ async def test_action_pull_observations_triggers_fetch_vehicle_trips_action(mock
     mock_get_auth_config = mocker.patch("app.actions.handlers.get_auth_config", return_value=auth_config)
     mock_get_vehicles = mocker.patch(
         "app.actions.client.get_vehicles",
-        return_value=AsyncMock(vehicles=[AsyncMock(id="veh1", serialNumber="sn1", displayName="Vehicle 1")]),
+        return_value=AsyncMock(vehicles=[client.CTCVehicle(id="veh1", serial_number="sn1", display_name="Vehicle 1")]),
     )
     mock_trigger_action = mocker.patch("app.actions.handlers.trigger_action", new_callable=AsyncMock)
 
     result = await handlers.action_pull_observations(integration, PullObservationsConfig())
 
-    mock_get_auth_config.assert_called_once_with(integration)
-    mock_get_vehicles.assert_awaited_once_with(integration, auth_config.subscription_key, handlers.CTC_BASE_URL)
+    mock_get_vehicles.assert_awaited_once_with(mock_token.jwt, auth_config.subscription_key, handlers.CTC_BASE_URL)
     mock_trigger_action.assert_awaited_once()
     assert result["status"] == "success"
     assert result["vehicles_triggered"] == 1
@@ -87,9 +92,15 @@ async def test_action_pull_observations_no_vehicles(mocker, mock_publish_event):
     integration.base_url = None
 
     auth_config = MagicMock()
-    auth_config.subscription_key = "key"
+    auth_config.subscription_key = pydantic.SecretStr("key")
     auth_config.username = "user"
+    auth_config.password = pydantic.SecretStr("pass")
 
+    mock_token = MagicMock()
+    mock_token.jwt = "token_jwt"
+    mock_token.valid_to_utc = datetime.now(timezone.utc) + timedelta(hours=1)
+
+    mocker.patch("app.actions.client.get_token", return_value=mock_token)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
     mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
@@ -109,7 +120,15 @@ async def test_action_fetch_vehicle_trips_success(mocker, mock_publish_event):
     integration.base_url = None
 
     auth_config = MagicMock()
-    auth_config.subscription_key = "key"
+    auth_config.subscription_key = pydantic.SecretStr("key")
+    auth_config.username = "user"
+    auth_config.password = pydantic.SecretStr("pass")
+
+    mock_token = MagicMock()
+    mock_token.jwt = "token_jwt"
+    mock_token.valid_to_utc = datetime.now(timezone.utc) + timedelta(hours=1)
+
+    mocker.patch("app.actions.client.get_token", return_value=mock_token)
 
     vehicle_id = "veh1"
     action_config = PullVehicleTripsConfig(

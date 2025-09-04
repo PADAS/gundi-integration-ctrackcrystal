@@ -1,6 +1,6 @@
 import pydantic
 
-from app.actions.core import AuthActionConfiguration, PullActionConfiguration
+from app.actions.core import AuthActionConfiguration, PullActionConfiguration, InternalActionConfiguration
 from app.services.errors import ConfigurationNotFound
 from app.services.utils import find_config_for_action, FieldWithUIOptions, UIOptions, GlobalUISchemaOptions
 
@@ -39,7 +39,7 @@ class PullObservationsConfig(PullActionConfiguration):
     pass
 
 
-class PullVehicleTripsConfig(PullActionConfiguration):
+class PullVehicleTripsConfig(InternalActionConfiguration):
     vehicle_id: str
     vehicle_serial_number: str
     vehicle_display_name: str

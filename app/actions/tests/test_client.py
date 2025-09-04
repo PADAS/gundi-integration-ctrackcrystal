@@ -50,7 +50,6 @@ async def test_get_token_success(mocker):
     mocker.patch("httpx.AsyncClient", return_value=mock_client)
 
     token = await get_token(
-        "integration_id",
         "http://base.url",
         "user",
         MagicMock(get_secret_value=lambda: "pass"),
@@ -90,7 +89,6 @@ async def test_get_token_http_errors(mocker, status_code, exception_type):
 
     with pytest.raises(exception_type):
         await get_token(
-            "integration_id",
             "http://base.url",
             "user",
             MagicMock(get_secret_value=lambda: "pass"),
@@ -115,7 +113,6 @@ async def test_refresh_token_success(mocker):
     mocker.patch("httpx.AsyncClient", return_value=mock_client)
 
     token = await refresh_token(
-        "integration_id",
         "http://base.url",
         "token",
         MagicMock(get_secret_value=lambda: "subkey")
@@ -154,7 +151,6 @@ async def test_refresh_token_http_errors(mocker, status_code, exception_type):
 
     with pytest.raises(exception_type):
         await refresh_token(
-            "integration_id",
             "http://base.url",
             "token123",
             MagicMock(get_secret_value=lambda: "subkey")
@@ -182,13 +178,13 @@ async def test_get_vehicles_success(mocker):
     mock_client.__aexit__.return_value = AsyncMock()
 
     mocker.patch("httpx.AsyncClient", return_value=mock_client)
-    mocker.patch("app.actions.client.retrieve_token", return_value=AsyncMock(jwt="token123"))
+    mocker.patch("app.actions.handlers.retrieve_token", return_value=AsyncMock(jwt="token123"))
 
     integration = MagicMock()
     integration.id = "integration_id"
     subscription_key = MagicMock(get_secret_value=lambda: "subkey")
 
-    vehicles_response = await get_vehicles(integration, subscription_key, "http://base.url")
+    vehicles_response = await get_vehicles("token123", subscription_key, "http://base.url")
     assert vehicles_response.count == 1
     assert vehicles_response.vehicles[0].id == "veh1"
 
@@ -209,14 +205,14 @@ async def test_get_vehicles_http_errors(mocker, status_code, exception_type):
     client_cm.__aexit__.return_value = False
     mocker.patch("httpx.AsyncClient", return_value=client_cm)
 
-    mocker.patch("app.actions.client.retrieve_token",
+    mocker.patch("app.actions.handlers.retrieve_token",
                  AsyncMock(return_value=SimpleNamespace(jwt="token123")))
 
     integration = SimpleNamespace(id="integration_id")
     subscription_key = MagicMock(get_secret_value=lambda: "subkey")
 
     with pytest.raises(exception_type):
-        await get_vehicles(integration, subscription_key, "http://base.url")
+        await get_vehicles("token123", subscription_key, "http://base.url")
 
 @pytest.mark.asyncio
 async def test_get_vehicle_trips_success(mocker):
@@ -240,14 +236,14 @@ async def test_get_vehicle_trips_success(mocker):
     mock_client.__aexit__.return_value = AsyncMock()
 
     mocker.patch("httpx.AsyncClient", return_value=mock_client)
-    mocker.patch("app.actions.client.retrieve_token", return_value=AsyncMock(jwt="token123"))
+    mocker.patch("app.actions.handlers.retrieve_token", return_value=AsyncMock(jwt="token123"))
 
     integration = MagicMock()
     integration.id = "integration_id"
     subscription_key = MagicMock(get_secret_value=lambda: "subkey")
 
     trips_response = await get_vehicle_trips(
-        integration,
+        "token123",
         subscription_key,
         "http://base.url",
         "veh1",
@@ -275,7 +271,7 @@ async def test_get_vehicle_trips_http_errors(mocker, status_code, exception_type
     client_cm.__aexit__.return_value = False
     mocker.patch("httpx.AsyncClient", return_value=client_cm)
 
-    mocker.patch("app.actions.client.retrieve_token", return_value=AsyncMock(jwt="token123"))
+    mocker.patch("app.actions.handlers.retrieve_token", return_value=AsyncMock(jwt="token123"))
 
     integration = MagicMock()
     integration.id = "integration_id"
@@ -283,7 +279,7 @@ async def test_get_vehicle_trips_http_errors(mocker, status_code, exception_type
 
     with pytest.raises(exception_type):
         await get_vehicle_trips(
-            integration,
+            "token123",
             subscription_key,
             "http://base.url",
             "veh1",
@@ -312,20 +308,19 @@ async def test_get_trip_summary_success(mocker):
     mock_client.__aexit__.return_value = AsyncMock()
 
     mocker.patch("httpx.AsyncClient", return_value=mock_client)
-    mocker.patch("app.actions.client.retrieve_token", return_value=AsyncMock(jwt="token123"))
+    mocker.patch("app.actions.handlers.retrieve_token", return_value=AsyncMock(jwt="token123"))
 
     integration = MagicMock()
     integration.id = "integration_id"
     subscription_key = MagicMock(get_secret_value=lambda: "subkey")
 
     trip_summary = await get_trip_summary(
-        integration,
+        "token123",
         subscription_key,
         "http://base.url",
-        "veh1",
         "trip1"
     )
-    assert len(trip_summary.locationSummary) == 1
+    assert len(trip_summary.location_summary) == 1
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status_code,exception_type", [
@@ -344,17 +339,15 @@ async def test_get_trip_summary_http_errors(mocker, status_code, exception_type)
     client_cm.__aexit__.return_value = False
     mocker.patch("httpx.AsyncClient", return_value=client_cm)
 
-    mocker.patch("app.actions.client.retrieve_token",
+    mocker.patch("app.actions.handlers.retrieve_token",
                  AsyncMock(return_value=SimpleNamespace(jwt="token123")))
 
-    integration = SimpleNamespace(id="integration_id")
     subscription_key = MagicMock(get_secret_value=lambda: "subkey")
 
     with pytest.raises(exception_type):
         await get_trip_summary(
-            integration,
+            "token123",
             subscription_key,
             "http://base.url",
-            "veh1",
             "trip1"
         )
