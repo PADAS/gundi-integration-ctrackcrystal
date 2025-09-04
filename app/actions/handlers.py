@@ -44,11 +44,6 @@ def transform(observation: client.CTCLocationSummary, vehicle: PullVehicleTripsC
     }
 
 
-@backoff.on_exception(
-    backoff.constant,
-    client.CTCForbiddenException,
-    max_tries=2
-)
 async def retrieve_token(integration: Integration, base_url: str) -> client.CTCLoginResponse:
     """
         Helper function to retrieve token from state or CTC API.
@@ -84,12 +79,12 @@ async def retrieve_token(integration: Integration, base_url: str) -> client.CTCL
                 auth_config.subscription_key
             )
         except client.CTCForbiddenException:
-            await state_manager.delete_state(
-                str(integration.id),
-                "auth",
-                "token"
+            token = await client.get_token(
+                base_url,
+                auth_config.username,
+                auth_config.password,
+                auth_config.subscription_key
             )
-            raise
 
     await state_manager.set_state(
         str(integration.id),
@@ -202,10 +197,9 @@ async def action_fetch_vehicle_trips(integration, action_config: PullVehicleTrip
                         logger.info(f"Skipping trip detail date {trip_detail.date} for vehicle {action_config.vehicle_id} (tripId is 0)")
                         continue
 
-                    if vehicle_state:
-                        if trip_detail.trip_end_time <= vehicle_last_updated:
-                            logger.info(f"Trip {trip_detail.trip_id} for vehicle {action_config.vehicle_id} is already processed. Skipping...")
-                            continue
+                    if vehicle_last_updated and trip_detail.trip_end_time <= vehicle_last_updated:
+                        logger.info(f"Trip {trip_detail.trip_id} for vehicle {action_config.vehicle_id} is already processed. Skipping...")
+                        continue
 
                     logger.info(f"Getting trip summary for trip {trip_detail.trip_id} vehicle {action_config.vehicle_id} to extract observations...")
                     if trip_summary := await client.get_trip_summary(
