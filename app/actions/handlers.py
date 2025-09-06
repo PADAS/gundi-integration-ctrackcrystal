@@ -108,7 +108,8 @@ async def action_auth(integration, action_config: AuthenticateConfig):
             action_config.subscription_key
         )
         if token_response:
-            return {"valid_credentials": True, "token": token_response.jwt}
+            token = (token_response.jwt[:100] + '...') if len(token_response.jwt) > 100 else token_response.jwt
+            return {"valid_credentials": True, "token": token}
         logger.warning(f"-- Login failed for integration ID: {integration.id} Username: {action_config.username} --")
         return {"valid_credentials": False, "message": "Failed to retrieve token"}
     except client.CTCUnauthorizedException as e:
