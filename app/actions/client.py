@@ -74,8 +74,8 @@ class CTCTripDetail(UTCNormalizedModel):
     trip_start_longitude: Optional[str] = pydantic.Field(default=None, alias="tripStartLongitude")
     trip_end_latitude: Optional[str] = pydantic.Field(default=None, alias="tripEndLatitude")
     trip_end_longitude: Optional[str] = pydantic.Field(default=None, alias="tripEndLongitude")
-    start_location_detail: Optional[str] = pydantic.Field(default=None, alias="startLocationDetail")
-    end_location_detail: Optional[str] = pydantic.Field(default=None, alias="endLocationDetail")
+    start_location_detail: Optional[dict] = pydantic.Field(default=None, alias="startLocationDetail")
+    end_location_detail: Optional[dict] = pydantic.Field(default=None, alias="endLocationDetail")
 
     class Config:
         allow_population_by_field_name = True

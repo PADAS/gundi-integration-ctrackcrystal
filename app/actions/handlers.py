@@ -1,6 +1,5 @@
 import logging
 import httpx
-import backoff
 
 import app.actions.client as client
 
@@ -21,6 +20,7 @@ state_manager = IntegrationStateManager()
 
 CTC_BASE_URL = "https://apim.ctrackcrystal.com/api"
 INVALID_TRIP_ID = "0"
+MAX_TOKEN_DISPLAY_LENGTH = 100
 
 
 def transform(observation: client.CTCLocationSummary, vehicle: PullVehicleTripsConfig) -> dict:
@@ -108,7 +108,8 @@ async def action_auth(integration, action_config: AuthenticateConfig):
             action_config.subscription_key
         )
         if token_response:
-            return {"valid_credentials": True, "token": token_response.jwt}
+            token = (token_response.jwt[:MAX_TOKEN_DISPLAY_LENGTH] + '...') if len(token_response.jwt) > MAX_TOKEN_DISPLAY_LENGTH else token_response.jwt
+            return {"valid_credentials": True, "token": token}
         logger.warning(f"-- Login failed for integration ID: {integration.id} Username: {action_config.username} --")
         return {"valid_credentials": False, "message": "Failed to retrieve token"}
     except client.CTCUnauthorizedException as e:

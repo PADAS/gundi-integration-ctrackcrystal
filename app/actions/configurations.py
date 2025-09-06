@@ -1,11 +1,11 @@
 import pydantic
 
-from app.actions.core import AuthActionConfiguration, PullActionConfiguration, InternalActionConfiguration
+from app.actions.core import AuthActionConfiguration, PullActionConfiguration, InternalActionConfiguration, ExecutableActionMixin
 from app.services.errors import ConfigurationNotFound
 from app.services.utils import find_config_for_action, FieldWithUIOptions, UIOptions, GlobalUISchemaOptions
 
 
-class AuthenticateConfig(AuthActionConfiguration):
+class AuthenticateConfig(AuthActionConfiguration, ExecutableActionMixin):
     subscription_key: pydantic.SecretStr = FieldWithUIOptions(
         title="Ctrack Crystal Subscription Key",
         description="A valid Ctrack Crystal API subscription key",
