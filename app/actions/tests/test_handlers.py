@@ -194,6 +194,7 @@ async def test_action_fetch_vehicle_trips_exception(mocker, mock_publish_event):
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
     mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
+    mocker.patch("app.actions.handlers.state_manager.get_state", return_value=None)
 
     mock_log_action_activity = mocker.patch("app.actions.handlers.log_action_activity", new_callable=AsyncMock)
 
