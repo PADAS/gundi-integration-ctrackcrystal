@@ -168,8 +168,23 @@ async def action_fetch_vehicle_trips(integration, action_config: PullVehicleTrip
 
     transformed_data = []
 
-    # Get trips from today by default
-    filter_day = datetime.now(timezone.utc)
+    # Check vehicle last processed time
+    vehicle_last_updated = None
+    vehicle_state = await state_manager.get_state(
+        integration_id=integration.id,
+        action_id="pull_observations",
+        source_id=action_config.vehicle_id
+    )
+
+    vehicle_updated_at = vehicle_state.get("updated_at") if vehicle_state else None
+
+    if vehicle_updated_at:
+        vehicle_last_updated = datetime.fromisoformat(vehicle_updated_at).replace(tzinfo=timezone.utc)
+        filter_day = vehicle_last_updated
+        logger.info(f"Vehicle {action_config.vehicle_id} last processed at {vehicle_last_updated.isoformat()}. Fetching trips from that date...")
+    else:
+        filter_day = datetime.now(timezone.utc) - timedelta(days=1)
+        logger.info(f"Vehicle {action_config.vehicle_id} has no last processed date. Fetching trips from yesterday...")
 
     try:
         token = await retrieve_token(integration, base_url)
@@ -182,14 +197,6 @@ async def action_fetch_vehicle_trips(integration, action_config: PullVehicleTrip
             filter_day
         ):
             logger.info(f"Extracted {len(trips_response.payload)} trips for vehicle {action_config.vehicle_id} from {filter_day.strftime('%Y-%m-%d')}")
-            # Check vehicle last processed time
-            vehicle_last_updated = None
-            if vehicle_state := await state_manager.get_state(
-                integration_id=integration.id,
-                action_id="pull_observations",
-                source_id=action_config.vehicle_id
-            ):
-                vehicle_last_updated = datetime.fromisoformat(vehicle_state.get("updated_at")).replace(tzinfo=timezone.utc)
 
             for trip in trips_response.payload:
                 for trip_detail in trip.details:
