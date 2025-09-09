@@ -5,7 +5,12 @@ from datetime import datetime, timezone, timedelta
 
 import app.actions.handlers as handlers
 import app.actions.client as client
-from app.actions.configurations import AuthenticateConfig, PullObservationsConfig, PullVehicleTripsConfig
+from app.actions.configurations import (
+    AuthenticateConfig,
+    PullObservationsConfig,
+    PullVehicleTripsConfig,
+    TriggerFetchVehicleObservationsConfig
+)
 
 
 @pytest.mark.asyncio
@@ -86,6 +91,49 @@ async def test_action_pull_observations_triggers_fetch_vehicle_trips_action(mock
 
 
 @pytest.mark.asyncio
+async def test_action_trigger_fetch_vehicle_observations_triggers_fetch_vehicle_trips_action(mocker, mock_publish_event):
+    integration = MagicMock()
+    integration.id = "int1"
+    integration.base_url = None
+
+    auth_config = MagicMock()
+    auth_config.subscription_key = pydantic.SecretStr("key")
+    auth_config.username = "user"
+    auth_config.password = pydantic.SecretStr("pass")
+
+    action_config = TriggerFetchVehicleObservationsConfig(
+        start_date=datetime.now(timezone.utc).date() - timedelta(days=1),
+        end_date=datetime.now(timezone.utc).date(),
+        vehicle_id="veh1"
+    )
+
+    mock_token = MagicMock()
+    mock_token.jwt = "token_jwt"
+    mock_token.valid_to_utc = datetime.now(timezone.utc) + timedelta(hours=1)
+
+    mocker.patch("app.actions.client.get_token", return_value=mock_token)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
+    mocker.patch("app.actions.handlers.state_manager.get_state", new_callable=AsyncMock, return_value=None)
+    mocker.patch("app.actions.handlers.state_manager.set_state", new_callable=AsyncMock)
+
+    mock_get_auth_config = mocker.patch("app.actions.handlers.get_auth_config", return_value=auth_config)
+    mock_get_vehicles = mocker.patch(
+        "app.actions.client.get_vehicles",
+        return_value=AsyncMock(vehicles=[client.CTCVehicle(id="veh1", serial_number="sn1", display_name="Vehicle 1")]),
+    )
+    mock_trigger_action = mocker.patch("app.actions.handlers.trigger_action", new_callable=AsyncMock)
+
+    result = await handlers.action_trigger_fetch_vehicle_observations(integration, action_config)
+
+    mock_get_vehicles.assert_awaited_once_with(mock_token.jwt, auth_config.subscription_key, handlers.CTC_BASE_URL)
+    assert mock_trigger_action.await_count == 2
+    assert result["status"] == "success"
+    assert result["vehicle_triggered"] == True
+
+
+@pytest.mark.asyncio
 async def test_action_pull_observations_no_vehicles(mocker, mock_publish_event):
     integration = MagicMock()
     integration.id = "integration_id"
@@ -136,7 +184,8 @@ async def test_action_fetch_vehicle_trips_success(mocker, mock_publish_event):
     action_config = PullVehicleTripsConfig(
         vehicle_id=vehicle_id,
         vehicle_serial_number="sn1",
-        vehicle_display_name="Vehicle 1"
+        vehicle_display_name="Vehicle 1",
+        filter_day=datetime.now(timezone.utc)
     )
 
     trips_payload = [
@@ -186,7 +235,8 @@ async def test_action_fetch_vehicle_trips_exception(mocker, mock_publish_event):
     action_config = PullVehicleTripsConfig(
         vehicle_id=vehicle_id,
         vehicle_serial_number="sn1",
-        vehicle_display_name="Vehicle 1"
+        vehicle_display_name="Vehicle 1",
+        filter_day=datetime.now(timezone.utc)
     )
 
     mocker.patch("app.actions.handlers.get_auth_config", return_value=auth_config)

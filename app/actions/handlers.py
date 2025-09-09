@@ -3,10 +3,16 @@ import httpx
 
 import app.actions.client as client
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from gundi_core.schemas.v2 import LogLevel, Integration
-from app.actions.configurations import AuthenticateConfig, PullObservationsConfig, PullVehicleTripsConfig, get_auth_config
+from app.actions.configurations import (
+    AuthenticateConfig,
+    PullObservationsConfig,
+    PullVehicleTripsConfig,
+    TriggerFetchVehicleObservationsConfig,
+    get_auth_config
+)
 from app.services.action_scheduler import trigger_action
 from app.services.activity_logger import activity_logger, log_action_activity
 from app.services.gundi import send_observations_to_gundi
@@ -21,6 +27,23 @@ state_manager = IntegrationStateManager()
 CTC_BASE_URL = "https://apim.ctrackcrystal.com/api"
 INVALID_TRIP_ID = "0"
 MAX_TOKEN_DISPLAY_LENGTH = 100
+
+
+def date_range(start_date: date, end_date: date):
+    """
+        Yields a datetime at midnight for each day in the inclusive range from start_date to end_date.
+
+        Args:
+            start_date (date): The first date in the range.
+            end_date (date): The last date in the range.
+
+        Yields:
+            datetime: A datetime object at midnight for each day in the range.
+    """
+    current = start_date
+    while current <= end_date:
+        yield datetime.combine(current, datetime.min.time()).replace(tzinfo=timezone.utc)
+        current += timedelta(days=1)
 
 
 def transform(observation: client.CTCLocationSummary, vehicle: PullVehicleTripsConfig) -> dict:
@@ -143,10 +166,30 @@ async def action_pull_observations(integration, action_config: PullObservationsC
         for vehicle in vehicles_response.vehicles:
             logger.info(f"Triggering 'action_fetch_vehicle_trips' action for vehicle {vehicle.id} to extract observations...")
 
+            # Check vehicle last processed time
+            vehicle_last_updated = None
+            vehicle_state = await state_manager.get_state(
+                integration_id=integration.id,
+                action_id="pull_observations",
+                source_id=vehicle.id
+            )
+
+            vehicle_updated_at = vehicle_state.get("updated_at") if vehicle_state else None
+
+            if vehicle_updated_at:
+                vehicle_last_updated = datetime.fromisoformat(vehicle_updated_at).replace(tzinfo=timezone.utc)
+                filter_day = vehicle_last_updated
+                logger.info(f"Vehicle {vehicle.id} last processed at {vehicle_last_updated.isoformat()}. Fetching trips from that date...")
+            else:
+                filter_day = datetime.now(timezone.utc) - timedelta(days=1)
+                logger.info(f"Vehicle {vehicle.id} has no last processed date. Fetching trips from yesterday...")
+
             parsed_config = PullVehicleTripsConfig(
                 vehicle_id=vehicle.id,
                 vehicle_serial_number=vehicle.serial_number,
-                vehicle_display_name=vehicle.display_name
+                vehicle_display_name=vehicle.display_name,
+                vehicle_last_updated=vehicle_last_updated,
+                filter_day=filter_day
             )
             await trigger_action(integration.id, "fetch_vehicle_trips", config=parsed_config)
             vehicles_triggered += 1
@@ -159,6 +202,42 @@ async def action_pull_observations(integration, action_config: PullObservationsC
 
 
 @activity_logger()
+async def action_trigger_fetch_vehicle_observations(integration, action_config: TriggerFetchVehicleObservationsConfig):
+    logger.info(f"Executing 'trigger_fetch_vehicle_observations' action with integration ID {integration.id} and action_config {action_config}...")
+
+    base_url = integration.base_url or CTC_BASE_URL
+    auth_config = get_auth_config(integration)
+
+    token = await retrieve_token(integration, base_url)
+
+    vehicles_response = await client.get_vehicles(token.jwt, auth_config.subscription_key, base_url)
+
+    if not vehicles_response:
+        logger.error(f"No valid vehicles found for integration ID {integration.id}, Username: {auth_config.username}")
+        return {"status": "error", "message": "There was an error while retrieving vehicles"}
+
+    vehicle = next((v for v in vehicles_response.vehicles if v.id == action_config.vehicle_id), None)
+
+    if not vehicle:
+        logger.error(f"Vehicle {action_config.vehicle_id} not found for integration ID {integration.id}, Username: {auth_config.username}")
+        return {"status": "error", "message": f"Vehicle {action_config.vehicle_id} not found"}
+
+    for filter_day in date_range(action_config.start_date, action_config.end_date):
+        logger.info(f"Triggering 'action_fetch_vehicle_observations_per_day' action for vehicle {action_config.vehicle_id} to extract observations...")
+
+        parsed_config = PullVehicleTripsConfig(
+            vehicle_id=vehicle.id,
+            vehicle_serial_number=vehicle.serial_number,
+            vehicle_display_name=vehicle.display_name,
+            filter_day=filter_day,
+            save_vehicle_state=False
+        )
+        await trigger_action(integration.id, "fetch_vehicle_trips", config=parsed_config)
+
+    return {"status": "success", "vehicle_triggered": True}
+
+
+@activity_logger()
 async def action_fetch_vehicle_trips(integration, action_config: PullVehicleTripsConfig):
     logger.info(f"Executing 'action_fetch_vehicle_trips' action with integration ID {integration.id} and action_config {action_config}...")
 
@@ -168,24 +247,6 @@ async def action_fetch_vehicle_trips(integration, action_config: PullVehicleTrip
 
     transformed_data = []
 
-    # Check vehicle last processed time
-    vehicle_last_updated = None
-    vehicle_state = await state_manager.get_state(
-        integration_id=integration.id,
-        action_id="pull_observations",
-        source_id=action_config.vehicle_id
-    )
-
-    vehicle_updated_at = vehicle_state.get("updated_at") if vehicle_state else None
-
-    if vehicle_updated_at:
-        vehicle_last_updated = datetime.fromisoformat(vehicle_updated_at).replace(tzinfo=timezone.utc)
-        filter_day = vehicle_last_updated
-        logger.info(f"Vehicle {action_config.vehicle_id} last processed at {vehicle_last_updated.isoformat()}. Fetching trips from that date...")
-    else:
-        filter_day = datetime.now(timezone.utc) - timedelta(days=1)
-        logger.info(f"Vehicle {action_config.vehicle_id} has no last processed date. Fetching trips from yesterday...")
-
     try:
         token = await retrieve_token(integration, base_url)
         logger.info(f"-- Getting vehicle trips for integration ID: {integration.id} Vehicle ID: {action_config.vehicle_id} --")
@@ -194,9 +255,9 @@ async def action_fetch_vehicle_trips(integration, action_config: PullVehicleTrip
             auth_config.subscription_key,
             base_url,
             action_config.vehicle_id,
-            filter_day
+            action_config.filter_day
         ):
-            logger.info(f"Extracted {len(trips_response.payload)} trips for vehicle {action_config.vehicle_id} from {filter_day.strftime('%Y-%m-%d')}")
+            logger.info(f"Extracted {len(trips_response.payload)} trips for vehicle {action_config.vehicle_id} from {action_config.filter_day.strftime('%Y-%m-%d')}")
 
             for trip in trips_response.payload:
                 for trip_detail in trip.details:
@@ -205,7 +266,7 @@ async def action_fetch_vehicle_trips(integration, action_config: PullVehicleTrip
                         logger.info(f"Skipping trip detail date {trip_detail.date} for vehicle {action_config.vehicle_id} (tripId is 0)")
                         continue
 
-                    if vehicle_last_updated and trip_detail.trip_end_time <= vehicle_last_updated:
+                    if action_config.vehicle_last_updated and trip_detail.trip_end_time <= action_config.vehicle_last_updated:
                         logger.info(f"Trip {trip_detail.trip_id} for vehicle {action_config.vehicle_id} is already processed. Skipping...")
                         continue
 
@@ -221,22 +282,23 @@ async def action_fetch_vehicle_trips(integration, action_config: PullVehicleTrip
                         logger.warning(f"-- No trip summary returned for trip {trip_detail.trip_id} Vehicle ID {action_config.vehicle_id} integration ID: {integration.id} --")
 
             if transformed_data:
-                logger.info(f"Extracted {len(transformed_data)} observations for vehicle {action_config.vehicle_id} from {filter_day.strftime('%Y-%m-%d')}")
+                logger.info(f"Extracted {len(transformed_data)} observations for vehicle {action_config.vehicle_id} from {action_config.filter_day.strftime('%Y-%m-%d')}")
                 for i, batch in enumerate(generate_batches(transformed_data, 200)):
                     logger.info(f'Sending observations batch #{i}: {len(batch)} observations. Vehicle: {action_config.vehicle_id}')
                     response = await send_observations_to_gundi(observations=batch, integration_id=integration.id)
                     observations_extracted += len(response)
 
-                # Save latest device updated_at
-                latest_time = max(transformed_data, key=lambda obs: obs["recorded_at"])["recorded_at"]
-                state = {"updated_at": latest_time.isoformat()}
+                if action_config.save_vehicle_state:
+                    # Save latest device updated_at
+                    latest_time = max(transformed_data, key=lambda obs: obs["recorded_at"])["recorded_at"]
+                    state = {"updated_at": latest_time.isoformat()}
 
-                await state_manager.set_state(
-                    integration_id=integration.id,
-                    action_id="pull_observations",
-                    state=state,
-                    source_id=action_config.vehicle_id
-                )
+                    await state_manager.set_state(
+                        integration_id=integration.id,
+                        action_id="pull_observations",
+                        state=state,
+                        source_id=action_config.vehicle_id
+                    )
 
                 return {"observations_extracted": observations_extracted}
             else:
