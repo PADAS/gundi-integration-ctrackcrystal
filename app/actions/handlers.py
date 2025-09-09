@@ -203,7 +203,7 @@ async def action_pull_observations(integration, action_config: PullObservationsC
 
 @activity_logger()
 async def action_trigger_fetch_vehicle_observations(integration, action_config: TriggerFetchVehicleObservationsConfig):
-    logger.info(f"Executing 'pull_vehicle_observations_from_date_range' action with integration ID {integration.id} and action_config {action_config}...")
+    logger.info(f"Executing 'trigger_fetch_vehicle_observations' action with integration ID {integration.id} and action_config {action_config}...")
 
     base_url = integration.base_url or CTC_BASE_URL
     auth_config = get_auth_config(integration)
@@ -226,7 +226,7 @@ async def action_trigger_fetch_vehicle_observations(integration, action_config: 
         logger.info(f"Triggering 'action_fetch_vehicle_observations_per_day' action for vehicle {action_config.vehicle_id} to extract observations...")
 
         parsed_config = PullVehicleTripsConfig(
-            vehicle_id=action_config.vehicle_id,
+            vehicle_id=vehicle.id,
             vehicle_serial_number=vehicle.serial_number,
             vehicle_display_name=vehicle.display_name,
             filter_day=filter_day,
