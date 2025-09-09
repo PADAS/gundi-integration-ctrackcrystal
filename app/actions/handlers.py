@@ -30,9 +30,19 @@ MAX_TOKEN_DISPLAY_LENGTH = 100
 
 
 def date_range(start_date: date, end_date: date):
+    """
+        Yields a datetime at midnight for each day in the inclusive range from start_date to end_date.
+
+        Args:
+            start_date (date): The first date in the range.
+            end_date (date): The last date in the range.
+
+        Yields:
+            datetime: A datetime object at midnight for each day in the range.
+    """
     current = start_date
     while current <= end_date:
-        yield datetime.combine(current, datetime.min.time())
+        yield datetime.combine(current, datetime.min.time()).replace(tzinfo=timezone.utc)
         current += timedelta(days=1)
 
 

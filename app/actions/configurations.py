@@ -53,7 +53,7 @@ class TriggerFetchVehicleObservationsConfig(PullActionConfiguration, ExecutableA
     )
     vehicle_id: str = FieldWithUIOptions(
         title="Vehicle ID",
-        description="Fetch observations for this vehicle ID "
+        description="Fetch observations for this vehicle ID"
     )
 
     ui_global_options: GlobalUISchemaOptions = GlobalUISchemaOptions(
