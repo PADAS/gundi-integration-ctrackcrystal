@@ -195,7 +195,7 @@ async def action_pull_observations(integration: Integration, action_config: Pull
                 vehicle_last_updated=vehicle_last_updated,
                 filter_day=filter_day
             )
-            await trigger_action(integration.id, action_trigger_fetch_vehicle_observations.__name__.replace("action_", ""), config=parsed_config)
+            await trigger_action(integration.id, action_fetch_vehicle_trips.__name__.replace("action_", ""), config=parsed_config)
             vehicles_triggered += 1
 
         return {"status": "success", "vehicles_triggered": vehicles_triggered}
@@ -230,7 +230,8 @@ async def action_trigger_fetch_vehicle_observations(integration, action_config: 
             return {"status": "error", "message": f"Vehicle {action_config.vehicle_id} not found"}
 
         for filter_day in date_range(action_config.start_date, action_config.end_date):
-            logger.info(f"Triggering 'action_fetch_vehicle_observations_per_day' action for vehicle {action_config.vehicle_id} to extract observations...")
+            action_to_trigger = f"action_{action_fetch_vehicle_trips.__name__.replace('action_', '')}"
+            logger.info(f"Triggering '{action_to_trigger}' action for vehicle {action_config.vehicle_id} to extract observations...")
 
             parsed_config = PullVehicleTripsConfig(
                 vehicle_id=vehicle.id,
@@ -239,7 +240,7 @@ async def action_trigger_fetch_vehicle_observations(integration, action_config: 
                 filter_day=filter_day,
                 save_vehicle_state=False
             )
-            await trigger_action(integration.id, action_fetch_vehicle_trips.__name__.replace("action_", ""), config=parsed_config)
+            await trigger_action(integration.id, action_to_trigger, config=parsed_config)
 
         return {"status": "success", "vehicle_triggered": True}
     except client.CTCTooManyRequestsException:
