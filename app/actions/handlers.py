@@ -18,7 +18,7 @@ from app.services.activity_logger import activity_logger, log_action_activity
 from app.services.gundi import send_observations_to_gundi
 from app.services.state import IntegrationStateManager
 from app.services.utils import generate_batches
-
+from app.services.action_scheduler import crontab_schedule
 
 logger = logging.getLogger(__name__)
 state_manager = IntegrationStateManager()
@@ -69,7 +69,8 @@ def transform(observation: client.CTCLocationSummary, vehicle: PullVehicleTripsC
 
 async def retrieve_token(integration: Integration, base_url: str) -> client.CTCLoginResponse:
     """
-        Helper function to retrieve token from state or CTC API.
+    Helper function to retrieve token from state or CTC API.
+    May raise client.CTCTooManyRequestsException after retries if the API returns 429.
     """
     saved_token = await state_manager.get_state(
         str(integration.id),
@@ -137,6 +138,8 @@ async def action_auth(integration, action_config: AuthenticateConfig):
         return {"valid_credentials": False, "message": "Failed to retrieve token"}
     except client.CTCUnauthorizedException as e:
         return {"valid_credentials": False, "status_code": e.status_code, "message": "Unauthorized access (bad username and/or password)"}
+    except client.CTCTooManyRequestsException as e:
+        return {"status": "error", "status_code": 429, "message": "Ctrack Crystal API rate limit exceeded. Try again later."}
     except client.CTCInternalServerException as e:
         return {"status": "error", "status_code": e.status_code, "message": "Internal server error at Ctrack Crystal"}
     except httpx.HTTPStatusError as e:
@@ -144,7 +147,8 @@ async def action_auth(integration, action_config: AuthenticateConfig):
 
 
 @activity_logger()
-async def action_pull_observations(integration, action_config: PullObservationsConfig):
+@crontab_schedule("*/10 * * * *")
+async def action_pull_observations(integration: Integration, action_config: PullObservationsConfig):
     logger.info(f"Executing 'pull_observations' action with integration ID {integration.id} and action_config {action_config}...")
 
     vehicles_triggered = 0
@@ -152,16 +156,16 @@ async def action_pull_observations(integration, action_config: PullObservationsC
 
     auth_config = get_auth_config(integration)
 
-    token = await retrieve_token(integration, base_url)
-
-    logger.info(f"-- Getting vehicles for integration ID: {integration.id} --")
-    vehicles_response = await client.get_vehicles(token.jwt, auth_config.subscription_key, base_url)
-
-    if not vehicles_response:
-        logger.warning(f"No valid vehicles found for integration ID {integration.id}, Username: {auth_config.username}")
-        return {"status": "success", "vehicles_triggered": 0}
-
     try:
+        token = await retrieve_token(integration, base_url)
+
+        logger.info(f"-- Getting vehicles for integration ID: {integration.id} --")
+        vehicles_response = await client.get_vehicles(token.jwt, auth_config.subscription_key, base_url)
+
+        if not vehicles_response:
+            logger.warning(f"No valid vehicles found for integration ID {integration.id}, Username: {auth_config.username}")
+            return {"status": "success", "vehicles_triggered": 0}
+
         logger.info(f"-- Extracted {len(vehicles_response.vehicles)} vehicles username: {auth_config.username}, Integration ID: {integration.id} --")
         for vehicle in vehicles_response.vehicles:
             logger.info(f"Triggering 'action_fetch_vehicle_trips' action for vehicle {vehicle.id} to extract observations...")
@@ -191,14 +195,16 @@ async def action_pull_observations(integration, action_config: PullObservationsC
                 vehicle_last_updated=vehicle_last_updated,
                 filter_day=filter_day
             )
-            await trigger_action(integration.id, "fetch_vehicle_trips", config=parsed_config)
+            await trigger_action(integration.id, action_trigger_fetch_vehicle_observations.__name__.replace("action_", ""), config=parsed_config)
             vehicles_triggered += 1
 
+        return {"status": "success", "vehicles_triggered": vehicles_triggered}
+    except client.CTCTooManyRequestsException:
+        logger.warning("Rate limit (429) from Ctrack Crystal API")
+        raise
     except Exception as e:
         logger.error(f"Failed to process vehicles from integration ID {integration.id}, username: {auth_config.username}")
         raise e
-
-    return {"status": "success", "vehicles_triggered": vehicles_triggered}
 
 
 @activity_logger()
@@ -208,33 +214,37 @@ async def action_trigger_fetch_vehicle_observations(integration, action_config: 
     base_url = integration.base_url or CTC_BASE_URL
     auth_config = get_auth_config(integration)
 
-    token = await retrieve_token(integration, base_url)
+    try:
+        token = await retrieve_token(integration, base_url)
 
-    vehicles_response = await client.get_vehicles(token.jwt, auth_config.subscription_key, base_url)
+        vehicles_response = await client.get_vehicles(token.jwt, auth_config.subscription_key, base_url)
 
-    if not vehicles_response:
-        logger.error(f"No valid vehicles found for integration ID {integration.id}, Username: {auth_config.username}")
-        return {"status": "error", "message": "There was an error while retrieving vehicles"}
+        if not vehicles_response:
+            logger.error(f"No valid vehicles found for integration ID {integration.id}, Username: {auth_config.username}")
+            return {"status": "error", "message": "There was an error while retrieving vehicles"}
 
-    vehicle = next((v for v in vehicles_response.vehicles if v.id == action_config.vehicle_id), None)
+        vehicle = next((v for v in vehicles_response.vehicles if v.id == action_config.vehicle_id), None)
 
-    if not vehicle:
-        logger.error(f"Vehicle {action_config.vehicle_id} not found for integration ID {integration.id}, Username: {auth_config.username}")
-        return {"status": "error", "message": f"Vehicle {action_config.vehicle_id} not found"}
+        if not vehicle:
+            logger.error(f"Vehicle {action_config.vehicle_id} not found for integration ID {integration.id}, Username: {auth_config.username}")
+            return {"status": "error", "message": f"Vehicle {action_config.vehicle_id} not found"}
 
-    for filter_day in date_range(action_config.start_date, action_config.end_date):
-        logger.info(f"Triggering 'action_fetch_vehicle_observations_per_day' action for vehicle {action_config.vehicle_id} to extract observations...")
+        for filter_day in date_range(action_config.start_date, action_config.end_date):
+            logger.info(f"Triggering 'action_fetch_vehicle_observations_per_day' action for vehicle {action_config.vehicle_id} to extract observations...")
 
-        parsed_config = PullVehicleTripsConfig(
-            vehicle_id=vehicle.id,
-            vehicle_serial_number=vehicle.serial_number,
-            vehicle_display_name=vehicle.display_name,
-            filter_day=filter_day,
-            save_vehicle_state=False
-        )
-        await trigger_action(integration.id, "fetch_vehicle_trips", config=parsed_config)
+            parsed_config = PullVehicleTripsConfig(
+                vehicle_id=vehicle.id,
+                vehicle_serial_number=vehicle.serial_number,
+                vehicle_display_name=vehicle.display_name,
+                filter_day=filter_day,
+                save_vehicle_state=False
+            )
+            await trigger_action(integration.id, action_fetch_vehicle_trips.__name__.replace("action_", ""), config=parsed_config)
 
-    return {"status": "success", "vehicle_triggered": True}
+        return {"status": "success", "vehicle_triggered": True}
+    except client.CTCTooManyRequestsException:
+        logger.warning("Rate limit (429) from Ctrack Crystal API")
+        return {"status": "error", "message": "API rate limit exceeded.", "status_code": 429}
 
 
 @activity_logger()
@@ -307,6 +317,17 @@ async def action_fetch_vehicle_trips(integration, action_config: PullVehicleTrip
         else:
             logger.warning(f"-- No trips returned for integration ID: {integration.id}: Vehicle ID {action_config.vehicle_id} --")
             return {"observations_extracted": 0}
+    except client.CTCTooManyRequestsException:
+        message = f"Rate limit (429) from Ctrack Crystal API for vehicle {action_config.vehicle_id}"
+        logger.warning(message)
+        await log_action_activity(
+            integration_id=integration.id,
+            action_id="pull_observations",
+            level=LogLevel.ERROR,
+            title=f"Rate limit exceeded fetching trips for vehicle {action_config.vehicle_id}.",
+            data={"message": message, "data": action_config}
+        )
+        return {"observations_extracted": 0}
     except Exception as e:
         message = f"Failed to fetch vehicle trips observations for vehicle {action_config.vehicle_id} from integration ID {integration.id}. Exception: {e}"
         logger.exception(message)

@@ -54,6 +54,50 @@ async def test_action_auth_unauthorized(mocker):
 
 
 @pytest.mark.asyncio
+async def test_action_auth_rate_limit_429(mocker):
+    integration = MagicMock()
+    integration.id = "integration_id"
+    action_config = AuthenticateConfig(username="user", password="pass", subscription_key="key")
+
+    mocker.patch(
+        "app.actions.client.get_token",
+        side_effect=client.CTCTooManyRequestsException("Rate Limit reached", None),
+    )
+
+    result = await handlers.action_auth(integration, action_config)
+
+    assert result["status"] == "error"
+    assert result["status_code"] == 429
+    assert "rate limit" in result["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_action_pull_observations_429_reraises(mocker, mock_publish_event):
+    integration = MagicMock()
+    integration.id = "int1"
+    integration.base_url = None
+
+    auth_config = MagicMock()
+    auth_config.subscription_key = pydantic.SecretStr("key")
+    auth_config.username = "user"
+    auth_config.password = pydantic.SecretStr("pass")
+
+    mocker.patch("app.actions.handlers.get_auth_config", return_value=auth_config)
+    mocker.patch("app.actions.handlers.state_manager.get_state", new_callable=AsyncMock, return_value=None)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
+
+    mocker.patch(
+        "app.actions.handlers.retrieve_token",
+        side_effect=client.CTCTooManyRequestsException("Rate Limit reached", None),
+    )
+
+    with pytest.raises(client.CTCTooManyRequestsException):
+        await handlers.action_pull_observations(integration, PullObservationsConfig())
+
+
+@pytest.mark.asyncio
 async def test_action_pull_observations_triggers_fetch_vehicle_trips_action(mocker, mock_publish_event):
     integration = MagicMock()
     integration.id = "int1"
@@ -131,6 +175,41 @@ async def test_action_trigger_fetch_vehicle_observations_triggers_fetch_vehicle_
     assert mock_trigger_action.await_count == 2
     assert result["status"] == "success"
     assert result["vehicle_triggered"] == True
+
+
+@pytest.mark.asyncio
+async def test_action_trigger_fetch_vehicle_observations_429(mocker, mock_publish_event):
+    integration = MagicMock()
+    integration.id = "int1"
+    integration.base_url = None
+
+    auth_config = MagicMock()
+    auth_config.subscription_key = pydantic.SecretStr("key")
+    auth_config.username = "user"
+    auth_config.password = pydantic.SecretStr("pass")
+
+    action_config = TriggerFetchVehicleObservationsConfig(
+        start_date=datetime.now(timezone.utc).date() - timedelta(days=1),
+        end_date=datetime.now(timezone.utc).date(),
+        vehicle_id="veh1"
+    )
+
+    mocker.patch("app.actions.handlers.get_auth_config", return_value=auth_config)
+    mocker.patch("app.actions.handlers.state_manager.get_state", new_callable=AsyncMock, return_value=None)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
+
+    mocker.patch(
+        "app.actions.handlers.retrieve_token",
+        side_effect=client.CTCTooManyRequestsException("Rate Limit reached", None),
+    )
+
+    result = await handlers.action_trigger_fetch_vehicle_observations(integration, action_config)
+
+    assert result["status"] == "error"
+    assert result["status_code"] == 429
+    assert "rate limit" in result["message"].lower()
 
 
 @pytest.mark.asyncio
@@ -252,3 +331,42 @@ async def test_action_fetch_vehicle_trips_exception(mocker, mock_publish_event):
 
     assert result["observations_extracted"] == 0
     mock_log_action_activity.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_action_fetch_vehicle_trips_429(mocker, mock_publish_event):
+    integration = MagicMock()
+    integration.id = "integration_id"
+    integration.base_url = None
+    auth_config = MagicMock()
+    auth_config.subscription_key = pydantic.SecretStr("key")
+
+    vehicle_id = "veh1"
+    action_config = PullVehicleTripsConfig(
+        vehicle_id=vehicle_id,
+        vehicle_serial_number="sn1",
+        vehicle_display_name="Vehicle 1",
+        filter_day=datetime.now(timezone.utc)
+    )
+
+    mocker.patch("app.actions.handlers.get_auth_config", return_value=auth_config)
+    mocker.patch("app.actions.handlers.state_manager.get_state", new_callable=AsyncMock, return_value=None)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
+    mocker.patch(
+        "app.actions.client.get_vehicle_trips",
+        side_effect=client.CTCTooManyRequestsException("Rate Limit reached", None),
+    )
+    mocker.patch("app.actions.handlers.retrieve_token", return_value=AsyncMock(
+        jwt="token", valid_to_utc=datetime.now(timezone.utc) + timedelta(hours=1)
+    ))
+
+    mock_log_action_activity = mocker.patch("app.actions.handlers.log_action_activity", new_callable=AsyncMock)
+
+    result = await handlers.action_fetch_vehicle_trips(integration, action_config)
+
+    assert result["observations_extracted"] == 0
+    mock_log_action_activity.assert_awaited_once()
+    kwargs = mock_log_action_activity.call_args[1]
+    assert "rate limit" in kwargs.get("title", "").lower()

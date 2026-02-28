@@ -2,6 +2,7 @@ import backoff
 import httpx
 import pydantic
 import logging
+from email.utils import parsedate_to_datetime
 
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -178,21 +179,39 @@ def handle_httpx_error(e):
 
 
 def _get_retry_after(exc):
-    """Extract Retry-After header value in seconds from exception."""
-    retry_after = 0
+    """Extract Retry-After header value in seconds from exception.
+    Supports delay-seconds (integer) or HTTP-date per RFC 7231.
+    Returns at least 1 second to avoid immediate retry storms.
+    """
+    retry_after = 10
     try:
         retry_after_header = exc.error.response.headers.get("Retry-After")
-        if retry_after_header:
-            retry_after = int(retry_after_header)
+        if not retry_after_header:
+            return max(10, 1)
+        raw = retry_after_header.strip()
+        try:
+            retry_after = int(raw)
+        except ValueError:
+            parsed = parsedate_to_datetime(raw)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            delta = (parsed - datetime.now(timezone.utc)).total_seconds()
+            retry_after = int(max(1, delta)) if delta > 0 else 10
     except Exception:
         retry_after = 10
-    return retry_after
+    return max(retry_after, 1)
 
 
 def make_retry_after_wait_gen():
     last_exc = {"exc": None}
     def on_backoff(details):
         last_exc["exc"] = details["exception"]
+        wait = details.get("wait", 10)
+        tries = details.get("tries", 0)
+        logger.warning(
+            "Rate limit (429) from Ctrack Crystal API, retrying in %ss (attempt %s/3)",
+            wait, tries,
+        )
     def wait_gen():
         while True:
             exc = last_exc["exc"]

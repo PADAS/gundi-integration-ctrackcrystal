@@ -9,6 +9,7 @@ from app.actions.client import (
     get_vehicles,
     get_vehicle_trips,
     get_trip_summary,
+    _get_retry_after,
     CTCUnauthorizedException,
     CTCForbiddenException,
     CTCTooManyRequestsException,
@@ -28,6 +29,16 @@ def _mk_http_error_response(status_code: int):
     )
     resp.raise_for_status.side_effect = http_err
     return resp
+
+
+def _mk_429_exception(retry_after_header=None):
+    """Build CTCTooManyRequestsException with optional Retry-After header."""
+    headers = {} if retry_after_header is None else {"Retry-After": retry_after_header}
+    response = MagicMock()
+    response.status_code = 429
+    response.headers = headers
+    http_err = httpx.HTTPStatusError("rate limit", request=MagicMock(), response=response)
+    return CTCTooManyRequestsException("Rate Limit reached", http_err)
 
 
 @pytest.mark.asyncio
@@ -65,6 +76,9 @@ async def test_get_token_success(mocker):
     (500, CTCInternalServerException),
 ])
 async def test_get_token_http_errors(mocker, status_code, exception_type):
+    # Avoid backoff actually sleeping on 429 (would wait ~10s per retry, 2 retries)
+    mocker.patch("asyncio.sleep", new_callable=AsyncMock)
+
     # Build a fake response whose raise_for_status raises the HTTPStatusError
     response = MagicMock()
     response.is_error = True
@@ -127,6 +141,9 @@ async def test_refresh_token_success(mocker):
     (500, CTCInternalServerException),
 ])
 async def test_refresh_token_http_errors(mocker, status_code, exception_type):
+    # Avoid backoff actually sleeping on 429 (would wait ~10s per retry, 2 retries)
+    mocker.patch("asyncio.sleep", new_callable=AsyncMock)
+
     # Response whose raise_for_status raises the httpx.HTTPStatusError
     response = MagicMock()
     response.is_error = True
@@ -351,3 +368,19 @@ async def test_get_trip_summary_http_errors(mocker, status_code, exception_type)
             "http://base.url",
             "trip1"
         )
+
+
+def test_get_retry_after_missing_header_returns_at_least_one():
+    exc = _mk_429_exception(retry_after_header=None)
+    assert _get_retry_after(exc) >= 1
+    assert _get_retry_after(exc) == 10
+
+
+def test_get_retry_after_zero_enforces_minimum_one():
+    exc = _mk_429_exception(retry_after_header="0")
+    assert _get_retry_after(exc) == 1
+
+
+def test_get_retry_after_delay_seconds():
+    exc = _mk_429_exception(retry_after_header="5")
+    assert _get_retry_after(exc) == 5
