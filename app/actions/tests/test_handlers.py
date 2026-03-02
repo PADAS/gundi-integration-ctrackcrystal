@@ -98,7 +98,7 @@ async def test_action_pull_observations_429_reraises(mocker, mock_publish_event)
 
 
 @pytest.mark.asyncio
-async def test_action_pull_observations_triggers_fetch_vehicle_trips_action(mocker, mock_publish_event):
+async def test_action_pull_observations_fetches_vehicle_trips_inline(mocker, mock_publish_event):
     integration = MagicMock()
     integration.id = "int1"
     integration.base_url = None
@@ -112,30 +112,33 @@ async def test_action_pull_observations_triggers_fetch_vehicle_trips_action(mock
     mock_token.jwt = "token_jwt"
     mock_token.valid_to_utc = datetime.now(timezone.utc) + timedelta(hours=1)
 
-    mocker.patch("app.actions.client.get_token", return_value=mock_token)
+    mocker.patch("app.actions.client.get_token", new_callable=AsyncMock, return_value=mock_token)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
     mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
     mocker.patch("app.actions.handlers.state_manager.get_state", new_callable=AsyncMock, return_value=None)
     mocker.patch("app.actions.handlers.state_manager.set_state", new_callable=AsyncMock)
 
-    mock_get_auth_config = mocker.patch("app.actions.handlers.get_auth_config", return_value=auth_config)
-    mock_get_vehicles = mocker.patch(
-        "app.actions.client.get_vehicles",
-        return_value=AsyncMock(vehicles=[client.CTCVehicle(id="veh1", serial_number="sn1", display_name="Vehicle 1")]),
+    mocker.patch("app.actions.handlers.get_auth_config", return_value=auth_config)
+    vehicles_response = MagicMock(vehicles=[client.CTCVehicle(id="veh1", serial_number="sn1", display_name="Vehicle 1")])
+    mocker.patch("app.actions.client.get_vehicles", new_callable=AsyncMock, return_value=vehicles_response)
+    one_obs = [{"recorded_at": datetime.now(timezone.utc), "source": "veh1", "source_name": "Vehicle 1"}]
+    mocker.patch(
+        "app.actions.handlers._fetch_one_vehicle_trips_observations",
+        new_callable=AsyncMock,
+        return_value=(one_obs, 1),
     )
-    mock_trigger_action = mocker.patch("app.actions.handlers.trigger_action", new_callable=AsyncMock)
+    mocker.patch("app.actions.handlers.send_observations_to_gundi", new_callable=AsyncMock, return_value=[1])
 
     result = await handlers.action_pull_observations(integration, PullObservationsConfig())
 
-    mock_get_vehicles.assert_awaited_once_with(mock_token.jwt, auth_config.subscription_key, handlers.CTC_BASE_URL)
-    mock_trigger_action.assert_awaited_once()
     assert result["status"] == "success"
-    assert result["vehicles_triggered"] == 1
+    assert result["vehicles_processed"] == 1
+    assert result["observations_extracted"] == 1
 
 
 @pytest.mark.asyncio
-async def test_action_trigger_fetch_vehicle_observations_triggers_fetch_vehicle_trips_action(mocker, mock_publish_event):
+async def test_action_trigger_fetch_vehicle_observations_fetches_inline(mocker, mock_publish_event):
     integration = MagicMock()
     integration.id = "int1"
     integration.base_url = None
@@ -155,26 +158,29 @@ async def test_action_trigger_fetch_vehicle_observations_triggers_fetch_vehicle_
     mock_token.jwt = "token_jwt"
     mock_token.valid_to_utc = datetime.now(timezone.utc) + timedelta(hours=1)
 
-    mocker.patch("app.actions.client.get_token", return_value=mock_token)
+    mocker.patch("app.actions.client.get_token", new_callable=AsyncMock, return_value=mock_token)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
     mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
     mocker.patch("app.actions.handlers.state_manager.get_state", new_callable=AsyncMock, return_value=None)
     mocker.patch("app.actions.handlers.state_manager.set_state", new_callable=AsyncMock)
 
-    mock_get_auth_config = mocker.patch("app.actions.handlers.get_auth_config", return_value=auth_config)
-    mock_get_vehicles = mocker.patch(
-        "app.actions.client.get_vehicles",
-        return_value=AsyncMock(vehicles=[client.CTCVehicle(id="veh1", serial_number="sn1", display_name="Vehicle 1")]),
+    mocker.patch("app.actions.handlers.get_auth_config", return_value=auth_config)
+    vehicles_response = MagicMock(vehicles=[client.CTCVehicle(id="veh1", serial_number="sn1", display_name="Vehicle 1")])
+    mocker.patch("app.actions.client.get_vehicles", new_callable=AsyncMock, return_value=vehicles_response)
+    one_obs = [{"recorded_at": datetime.now(timezone.utc)}]
+    mocker.patch(
+        "app.actions.handlers._fetch_one_vehicle_trips_observations",
+        new_callable=AsyncMock,
+        return_value=(one_obs, 1),
     )
-    mock_trigger_action = mocker.patch("app.actions.handlers.trigger_action", new_callable=AsyncMock)
+    mocker.patch("app.actions.handlers.send_observations_to_gundi", new_callable=AsyncMock, return_value=[1])
 
     result = await handlers.action_trigger_fetch_vehicle_observations(integration, action_config)
 
-    mock_get_vehicles.assert_awaited_once_with(mock_token.jwt, auth_config.subscription_key, handlers.CTC_BASE_URL)
-    assert mock_trigger_action.await_count == 2
     assert result["status"] == "success"
-    assert result["vehicle_triggered"] == True
+    assert result["vehicle_triggered"] is True
+    assert result["observations_extracted"] == 1
 
 
 @pytest.mark.asyncio
@@ -227,19 +233,20 @@ async def test_action_pull_observations_no_vehicles(mocker, mock_publish_event):
     mock_token.jwt = "token_jwt"
     mock_token.valid_to_utc = datetime.now(timezone.utc) + timedelta(hours=1)
 
-    mocker.patch("app.actions.client.get_token", return_value=mock_token)
+    mocker.patch("app.actions.client.get_token", new_callable=AsyncMock, return_value=mock_token)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
     mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
     mocker.patch("app.actions.handlers.get_auth_config", return_value=auth_config)
-    mocker.patch("app.actions.client.get_vehicles", return_value=None)
+    mocker.patch("app.actions.client.get_vehicles", new_callable=AsyncMock, return_value=None)
     mocker.patch("app.actions.handlers.state_manager.get_state", new_callable=AsyncMock, return_value=None)
     mocker.patch("app.actions.handlers.state_manager.set_state", new_callable=AsyncMock)
 
     result = await handlers.action_pull_observations(integration, PullObservationsConfig())
 
     assert result["status"] == "success"
-    assert result["vehicles_triggered"] == 0
+    assert result["vehicles_processed"] == 0
+    assert result["observations_extracted"] == 0
 
 
 @pytest.mark.asyncio
@@ -257,7 +264,7 @@ async def test_action_fetch_vehicle_trips_success(mocker, mock_publish_event):
     mock_token.jwt = "token_jwt"
     mock_token.valid_to_utc = datetime.now(timezone.utc) + timedelta(hours=1)
 
-    mocker.patch("app.actions.client.get_token", return_value=mock_token)
+    mocker.patch("app.actions.client.get_token", new_callable=AsyncMock, return_value=mock_token)
 
     vehicle_id = "veh1"
     action_config = PullVehicleTripsConfig(
@@ -283,14 +290,16 @@ async def test_action_fetch_vehicle_trips_success(mocker, mock_publish_event):
     mocker.patch("app.actions.handlers.get_auth_config", return_value=auth_config)
     mock_get_vehicle_trips = mocker.patch(
         "app.actions.client.get_vehicle_trips",
+        new_callable=AsyncMock,
         return_value=trips_response
     )
-    mocker.patch("app.actions.handlers.state_manager.get_state", return_value=None)
+    mocker.patch("app.actions.handlers.state_manager.get_state", new_callable=AsyncMock, return_value=None)
     mock_get_trip_summary = mocker.patch(
         "app.actions.client.get_trip_summary",
+        new_callable=AsyncMock,
         return_value=client.CTCDetailedTripSummaryResponse(locationSummary=[client.CTCLocationSummary(latitude=1.0, longitude=2.0, eventTime=datetime.now(timezone.utc))])
     )
-    mock_send_observations = mocker.patch("app.actions.handlers.send_observations_to_gundi", return_value=[1])
+    mock_send_observations = mocker.patch("app.actions.handlers.send_observations_to_gundi", new_callable=AsyncMock, return_value=[1])
     mock_set_state = mocker.patch("app.actions.handlers.state_manager.set_state", new_callable=AsyncMock)
 
     result = await handlers.action_fetch_vehicle_trips(integration, action_config)
@@ -319,11 +328,11 @@ async def test_action_fetch_vehicle_trips_exception(mocker, mock_publish_event):
     )
 
     mocker.patch("app.actions.handlers.get_auth_config", return_value=auth_config)
-    mocker.patch("app.actions.client.get_vehicle_trips", side_effect=Exception("fail"))
+    mocker.patch("app.actions.client.get_vehicle_trips", new_callable=AsyncMock, side_effect=Exception("fail"))
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
     mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
-    mocker.patch("app.actions.handlers.state_manager.get_state", return_value=None)
+    mocker.patch("app.actions.handlers.state_manager.get_state", new_callable=AsyncMock, return_value=None)
 
     mock_log_action_activity = mocker.patch("app.actions.handlers.log_action_activity", new_callable=AsyncMock)
 
@@ -356,11 +365,11 @@ async def test_action_fetch_vehicle_trips_429(mocker, mock_publish_event):
     mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
     mocker.patch(
         "app.actions.client.get_vehicle_trips",
+        new_callable=AsyncMock,
         side_effect=client.CTCTooManyRequestsException("Rate Limit reached", None),
     )
-    mocker.patch("app.actions.handlers.retrieve_token", return_value=AsyncMock(
-        jwt="token", valid_to_utc=datetime.now(timezone.utc) + timedelta(hours=1)
-    ))
+    mock_token = MagicMock(jwt="token", valid_to_utc=datetime.now(timezone.utc) + timedelta(hours=1))
+    mocker.patch("app.actions.handlers.retrieve_token", new_callable=AsyncMock, return_value=mock_token)
 
     mock_log_action_activity = mocker.patch("app.actions.handlers.log_action_activity", new_callable=AsyncMock)
 
