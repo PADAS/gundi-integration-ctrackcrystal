@@ -148,9 +148,10 @@ async def test_action_trigger_fetch_vehicle_observations_fetches_inline(mocker, 
     auth_config.username = "user"
     auth_config.password = pydantic.SecretStr("pass")
 
+    today = datetime.now(timezone.utc).date()
     action_config = TriggerFetchVehicleObservationsConfig(
-        start_date=datetime.now(timezone.utc).date() - timedelta(days=1),
-        end_date=datetime.now(timezone.utc).date(),
+        start_date=today,
+        end_date=today,
         vehicle_id="veh1"
     )
 
