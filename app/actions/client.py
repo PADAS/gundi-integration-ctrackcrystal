@@ -183,11 +183,13 @@ def _get_retry_after(exc):
     Supports delay-seconds (integer) or HTTP-date per RFC 7231.
     Returns at least 1 second to avoid immediate retry storms.
     """
+    if exc is None:
+        return 10
     retry_after = 10
     try:
         retry_after_header = exc.error.response.headers.get("Retry-After")
         if not retry_after_header:
-            return max(10, 1)
+            return 10
         raw = retry_after_header.strip()
         try:
             retry_after = int(raw)
@@ -202,32 +204,29 @@ def _get_retry_after(exc):
     return max(retry_after, 1)
 
 
-def make_retry_after_wait_gen():
-    last_exc = {"exc": None}
-    def on_backoff(details):
-        last_exc["exc"] = details["exception"]
-        wait = details.get("wait", 10)
-        tries = details.get("tries", 0)
-        logger.warning(
-            "Rate limit (429) from Ctrack Crystal API, retrying in %ss (attempt %s/3)",
-            wait, tries,
-        )
-    def wait_gen():
-        while True:
-            exc = last_exc["exc"]
-            yield _get_retry_after(exc) if exc else 10
-    return wait_gen, on_backoff
+def retry_after_wait_gen():
+    """Generator used by backoff: receives the exception via .send(exception)."""
+    exc = None
+    while True:
+        wait = _get_retry_after(exc)
+        exc = yield wait
 
 
-wait_gen, on_backoff_cb = make_retry_after_wait_gen()
+def _on_429_backoff(details):
+    wait = details.get("wait", 10)
+    tries = details.get("tries", 0)
+    logger.warning(
+        "Rate limit (429) from Ctrack Crystal API, retrying in %ss (attempt %s/3)",
+        wait, tries,
+    )
 
 
 @backoff.on_exception(
-    wait_gen=wait_gen,
+    wait_gen=retry_after_wait_gen,
     exception=CTCTooManyRequestsException,
     max_tries=3,
     jitter=None,
-    on_backoff=on_backoff_cb
+    on_backoff=_on_429_backoff,
 )
 async def get_token(
         base_url: str,
@@ -264,11 +263,11 @@ async def get_token(
 
 
 @backoff.on_exception(
-    wait_gen=wait_gen,
+    wait_gen=retry_after_wait_gen,
     exception=CTCTooManyRequestsException,
     max_tries=3,
     jitter=None,
-    on_backoff=on_backoff_cb
+    on_backoff=_on_429_backoff,
 )
 async def refresh_token(
         base_url: str,
@@ -299,11 +298,11 @@ async def refresh_token(
 
 
 @backoff.on_exception(
-    wait_gen=wait_gen,
+    wait_gen=retry_after_wait_gen,
     exception=CTCTooManyRequestsException,
     max_tries=3,
     jitter=None,
-    on_backoff=on_backoff_cb
+    on_backoff=_on_429_backoff,
 )
 async def get_vehicles(
         token: str,
@@ -334,11 +333,11 @@ async def get_vehicles(
 
 
 @backoff.on_exception(
-    wait_gen=wait_gen,
+    wait_gen=retry_after_wait_gen,
     exception=CTCTooManyRequestsException,
     max_tries=3,
     jitter=None,
-    on_backoff=on_backoff_cb
+    on_backoff=_on_429_backoff,
 )
 async def get_vehicle_trips(
         token: str,
@@ -376,11 +375,11 @@ async def get_vehicle_trips(
 
 
 @backoff.on_exception(
-    wait_gen=wait_gen,
+    wait_gen=retry_after_wait_gen,
     exception=CTCTooManyRequestsException,
     max_tries=3,
     jitter=None,
-    on_backoff=on_backoff_cb
+    on_backoff=_on_429_backoff,
 )
 async def get_trip_summary(
         token: str,
