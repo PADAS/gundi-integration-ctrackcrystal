@@ -361,16 +361,17 @@ async def test_action_fetch_vehicle_trips_429(mocker, mock_publish_event):
 
     mocker.patch("app.actions.handlers.get_auth_config", return_value=auth_config)
     mocker.patch("app.actions.handlers.state_manager.get_state", new_callable=AsyncMock, return_value=None)
+    mocker.patch("app.actions.handlers.state_manager.set_state", new_callable=AsyncMock)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
     mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
     mocker.patch(
-        "app.datasource.ctrack.get_vehicle_trips",
+        "app.actions.handlers.client.get_vehicle_trips",
         new_callable=AsyncMock,
         side_effect=client.TooManyRequestsException("Rate Limit reached", None),
     )
     mock_token = MagicMock(jwt="token", valid_to_utc=datetime.now(timezone.utc) + timedelta(hours=1))
-    mocker.patch("app.datasource.ctrack.get_token", new_callable=AsyncMock, return_value=mock_token)
+    mocker.patch("app.actions.handlers.retrieve_token", new_callable=AsyncMock, return_value=mock_token)
 
     mock_log_action_activity = mocker.patch("app.actions.handlers.log_action_activity", new_callable=AsyncMock)
 
