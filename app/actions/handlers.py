@@ -2,7 +2,7 @@ import asyncio
 import logging
 import httpx
 
-import app.actions.client as client
+import app.datasource.ctrack as client
 
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
@@ -29,7 +29,7 @@ _ctrack_semaphores: Dict[str, asyncio.Semaphore] = {}
 _semaphore_lock = asyncio.Lock()
 
 # Max concurrent Ctrack API requests per integration (1 = fully serialized)
-CTRACK_SEMAPHORE_LIMIT = 1
+CTRACK_SEMAPHORE_LIMIT = 3
 
 
 async def get_ctrack_semaphore(integration_id: str) -> asyncio.Semaphore:
@@ -69,7 +69,7 @@ def date_range(start_date: date, end_date: date):
         current += timedelta(days=1)
 
 
-def transform(observation: client.CTCLocationSummary, vehicle: PullVehicleTripsConfig) -> dict:
+def transform(observation: client.LocationSummary, vehicle: PullVehicleTripsConfig) -> dict:
     additional_info = {
         key: value for key, value in observation.dict().items() if value and key not in ["eventTime", "latitude", "longitude"]
     }
@@ -91,7 +91,7 @@ def transform(observation: client.CTCLocationSummary, vehicle: PullVehicleTripsC
 
 
 async def _fetch_one_vehicle_trips_observations(
-    token: client.CTCLoginResponse,
+    token: client.LoginResponse,
     auth_config: AuthenticateConfig,
     base_url: str,
     action_config: PullVehicleTripsConfig,
@@ -99,12 +99,12 @@ async def _fetch_one_vehicle_trips_observations(
     """
     Fetch trips and trip summaries for one vehicle/filter_day and return transformed observations.
     Does not send to Gundi or save state. Caller must hold Ctrack semaphore if limiting concurrency.
-    Returns (transformed_data, observations_count). Raises client.CTCTooManyRequestsException on 429.
+    Returns (transformed_data, observations_count). Raises client.TooManyRequestsException on 429.
     """
     transformed_data: List[dict] = []
     trips_response = await client.get_vehicle_trips(
         token.jwt,
-        auth_config.subscription_key,
+        auth_config.subscription_key.get_secret_value(),
         base_url,
         action_config.vehicle_id,
         action_config.filter_day,
@@ -129,14 +129,14 @@ async def _fetch_one_vehicle_trips_observations(
             )
             trip_summary = await client.get_trip_summary(
                 token.jwt,
-                auth_config.subscription_key,
+                auth_config.subscription_key.get_secret_value(),
                 base_url,
                 trip_detail.trip_id,
             )
             if trip_summary:
                 transformed_data.extend([
                     transform(observation, action_config)
-                    for observation in trip_summary.location_summary
+                    for observation in trip_summary.locationSummary
                 ])
             else:
                 logger.warning(
@@ -146,10 +146,10 @@ async def _fetch_one_vehicle_trips_observations(
     return transformed_data, len(transformed_data)
 
 
-async def retrieve_token(integration: Integration, base_url: str) -> client.CTCLoginResponse:
+async def retrieve_token(integration: Integration, base_url: str) -> client.LoginResponse:
     """
     Helper function to retrieve token from state or CTC API.
-    May raise client.CTCTooManyRequestsException after retries if the API returns 429.
+    May raise client.TooManyRequestsException after retries if the API returns 429.
     """
     saved_token = await state_manager.get_state(
         str(integration.id),
@@ -164,11 +164,11 @@ async def retrieve_token(integration: Integration, base_url: str) -> client.CTCL
         token = await client.get_token(
             base_url,
             auth_config.username,
-            auth_config.password,
-            auth_config.subscription_key
+            auth_config.password.get_secret_value(),
+            auth_config.subscription_key.get_secret_value()
         )
     else:
-        token = client.CTCLoginResponse.parse_obj(saved_token)
+        token = client.LoginResponse.parse_obj(saved_token)
 
     # Check if token is expired or about to expire in the next 5 minutes
     if datetime.now(timezone.utc) >= token.valid_to_utc - timedelta(minutes=5):
@@ -179,14 +179,14 @@ async def retrieve_token(integration: Integration, base_url: str) -> client.CTCL
             token = await client.refresh_token(
                 base_url,
                 token.jwt,
-                auth_config.subscription_key
+                auth_config.subscription_key.get_secret_value()
             )
-        except client.CTCForbiddenException:
+        except client.ForbiddenException:
             token = await client.get_token(
                 base_url,
                 auth_config.username,
-                auth_config.password,
-                auth_config.subscription_key
+                auth_config.password.get_secret_value(),
+                auth_config.subscription_key.get_secret_value()
             )
 
     await state_manager.set_state(
@@ -207,19 +207,19 @@ async def action_auth(integration, action_config: AuthenticateConfig):
         token_response = await client.get_token(
             CTC_BASE_URL,
             action_config.username,
-            action_config.password,
-            action_config.subscription_key
+            action_config.password.get_secret_value(),
+            action_config.subscription_key.get_secret_value()
         )
         if token_response:
             token = (token_response.jwt[:MAX_TOKEN_DISPLAY_LENGTH] + '...') if len(token_response.jwt) > MAX_TOKEN_DISPLAY_LENGTH else token_response.jwt
             return {"valid_credentials": True, "token": token}
         logger.warning(f"-- Login failed for integration ID: {integration.id} Username: {action_config.username} --")
         return {"valid_credentials": False, "message": "Failed to retrieve token"}
-    except client.CTCUnauthorizedException as e:
+    except client.UnauthorizedException as e:
         return {"valid_credentials": False, "status_code": e.status_code, "message": "Unauthorized access (bad username and/or password)"}
-    except client.CTCTooManyRequestsException as e:
+    except client.TooManyRequestsException as e:
         return {"status": "error", "status_code": 429, "message": "Ctrack Crystal API rate limit exceeded. Try again later."}
-    except client.CTCInternalServerException as e:
+    except client.InternalServerException as e:
         return {"status": "error", "status_code": e.status_code, "message": "Internal server error at Ctrack Crystal"}
     except httpx.HTTPStatusError as e:
         return {"status": "error", "status_code": e.response.status_code, "message": str(e)}
@@ -241,7 +241,7 @@ async def action_pull_observations(integration: Integration, action_config: Pull
         logger.info(f"-- Getting vehicles for integration ID: {integration.id} --")
         vehicles_response = await with_ctrack_semaphore(
             integration.id,
-            client.get_vehicles(token.jwt, auth_config.subscription_key, base_url),
+            client.get_vehicles(token.jwt, auth_config.subscription_key.get_secret_value(), base_url),
         )
 
         if not vehicles_response:
@@ -305,7 +305,7 @@ async def action_pull_observations(integration: Integration, action_config: Pull
             vehicles_processed += 1
 
         return {"status": "success", "vehicles_processed": vehicles_processed, "observations_extracted": total_observations}
-    except client.CTCTooManyRequestsException:
+    except client.TooManyRequestsException:
         logger.warning("Rate limit (429) from Ctrack Crystal API")
         raise
     except Exception as e:
@@ -325,7 +325,7 @@ async def action_trigger_fetch_vehicle_observations(integration, action_config: 
         token = await with_ctrack_semaphore(integration.id, retrieve_token(integration, base_url))
         vehicles_response = await with_ctrack_semaphore(
             integration.id,
-            client.get_vehicles(token.jwt, auth_config.subscription_key, base_url),
+            client.get_vehicles(token.jwt, auth_config.subscription_key.get_secret_value(), base_url),
         )
 
         if not vehicles_response:
@@ -359,7 +359,7 @@ async def action_trigger_fetch_vehicle_observations(integration, action_config: 
                     total_observations += len(response)
 
         return {"status": "success", "vehicle_triggered": True, "observations_extracted": total_observations}
-    except client.CTCTooManyRequestsException:
+    except client.TooManyRequestsException:
         logger.warning("Rate limit (429) from Ctrack Crystal API")
         return {"status": "error", "message": "API rate limit exceeded.", "status_code": 429}
 
@@ -399,7 +399,7 @@ async def action_fetch_vehicle_trips(integration, action_config: PullVehicleTrip
         else:
             logger.info(f"No new observations to extract for vehicle {action_config.vehicle_id}")
             return {"observations_extracted": 0}
-    except client.CTCTooManyRequestsException:
+    except client.TooManyRequestsException:
         message = f"Rate limit (429) from Ctrack Crystal API for vehicle {action_config.vehicle_id}"
         logger.warning(message)
         await log_action_activity(

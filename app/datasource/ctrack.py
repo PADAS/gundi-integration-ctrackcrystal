@@ -20,14 +20,14 @@ class UTCNormalizedModel(pydantic.BaseModel):
         return values
 
 
-class CTCLoginResponse(UTCNormalizedModel):
+class LoginResponse(UTCNormalizedModel):
     jwt: str
     valid_to_utc: datetime = pydantic.Field(..., alias="validToUtc")
     
     class Config:
         allow_population_by_field_name = True
 
-class CTCDevicesList(pydantic.BaseModel):
+class DevicesList(pydantic.BaseModel):
     id: Optional[str] = None
     unit_type: Optional[str] = pydantic.Field(default=None, alias="unitType")
     hardware_type: Optional[str] = pydantic.Field(default=None, alias="hardwareType")
@@ -36,7 +36,7 @@ class CTCDevicesList(pydantic.BaseModel):
         allow_population_by_field_name = True
 
 
-class CTCVehicle(UTCNormalizedModel):
+class Vehicle(UTCNormalizedModel):
     id: str
     serial_number: str = pydantic.Field(alias="serialNumber")
     display_name: str = pydantic.Field(alias="displayName")
@@ -51,13 +51,13 @@ class CTCVehicle(UTCNormalizedModel):
     running_hours: Optional[int] = pydantic.Field(default=None, alias="runningHours")
     first_start_up_time: Optional[datetime] = pydantic.Field(default=None, alias="firstStartUpTime")
     last_reported_time: Optional[datetime] = pydantic.Field(default=None, alias="lastReportedTime")
-    devices_list: Optional[List[CTCDevicesList]] = pydantic.Field(default=None, alias="devicesList")
+    devices_list: Optional[List[DevicesList]] = pydantic.Field(default=None, alias="devicesList")
 
     class Config:
         allow_population_by_field_name = True
 
 
-class CTCTripDetail(UTCNormalizedModel):
+class TripDetail(UTCNormalizedModel):
     date: datetime
     trip_id: str = pydantic.Field(alias="tripId")
     trip_start_time: Optional[datetime] = pydantic.Field(default=None, alias="tripStartTime")
@@ -82,7 +82,7 @@ class CTCTripDetail(UTCNormalizedModel):
         allow_population_by_field_name = True
 
 
-class CTCTrip(pydantic.BaseModel):
+class Trip(pydantic.BaseModel):
     id: str
     trip_count: Optional[int] = pydantic.Field(default=None, alias="tripCount")
     total_distance: Optional[float] = pydantic.Field(default=None, alias="totalDistance")
@@ -93,13 +93,13 @@ class CTCTrip(pydantic.BaseModel):
     max_speed: Optional[float] = pydantic.Field(default=None, alias="maxSpeed")
     average_daily_distance: Optional[float] = pydantic.Field(default=None, alias="averageDailyDistance")
     average_vehicle_distance: Optional[float] = pydantic.Field(default=None, alias="averageVehicleDistance")
-    details: List[CTCTripDetail]
+    details: List[TripDetail]
 
     class Config:
         allow_population_by_field_name = True
 
 
-class CTCLocationSummary(UTCNormalizedModel):
+class LocationSummary(UTCNormalizedModel):
     event_id: Optional[int] = pydantic.Field(default=None, alias="eventId")
     event_time: datetime = pydantic.Field(alias="eventTime")
     event_text: Optional[str] = pydantic.Field(default=None, alias="eventText")
@@ -115,24 +115,30 @@ class CTCLocationSummary(UTCNormalizedModel):
         allow_population_by_field_name = True
 
 
-class CTCDetailedTripSummaryResponse(pydantic.BaseModel):
-    location_summary: List[CTCLocationSummary] = pydantic.Field(default_factory=list, alias="locationSummary")
+class DetailedTripSummaryResponse(pydantic.BaseModel):
+    locationSummary: List[LocationSummary] = pydantic.Field(default_factory=list, alias="locationSummary")
+
+    @pydantic.validator("locationSummary", pre=True)
+    def _coerce_null_location_summary(cls, v):
+        if v is None:
+            return []
+        return v
 
     class Config:
         allow_population_by_field_name = True
 
 
-class CTCTripsResponse(pydantic.BaseModel):
+class TripsResponse(pydantic.BaseModel):
     count: int = 0
-    payload: List[CTCTrip] = pydantic.Field(default_factory=list)
+    payload: List[Trip] = pydantic.Field(default_factory=list)
 
 
-class CTCGetVehiclesResponse(pydantic.BaseModel):
+class GetVehiclesResponse(pydantic.BaseModel):
     count: int = 0
-    vehicles: List[CTCVehicle] = pydantic.Field(default_factory=list)
+    vehicles: List[Vehicle] = pydantic.Field(default_factory=list)
 
 
-class CTCBaseException(Exception):
+class ClientBaseException(Exception):
     default_status_code: int = None
 
     def __init__(self, message: str, error: Exception = None, status_code: int = None):
@@ -145,36 +151,36 @@ class CTCBaseException(Exception):
         return f"{self.status_code}: {self.message}, Error: {self.error}"
 
 
-class CTCTooManyRequestsException(CTCBaseException):
+class TooManyRequestsException(ClientBaseException):
     default_status_code = 429
 
 
-class CTCNotFoundException(CTCBaseException):
+class NotFoundException(ClientBaseException):
     default_status_code = 404
 
 
-class CTCUnauthorizedException(CTCBaseException):
+class UnauthorizedException(ClientBaseException):
     default_status_code = 401
 
 
-class CTCForbiddenException(CTCBaseException):
+class ForbiddenException(ClientBaseException):
     default_status_code = 403
 
 
-class CTCInternalServerException(CTCBaseException):
+class InternalServerException(ClientBaseException):
     default_status_code = 500
 
 
 def handle_httpx_error(e):
     status = e.response.status_code
     if status == 401:
-        raise CTCUnauthorizedException("Unauthorized access", e) from e
+        raise UnauthorizedException("Unauthorized access", e) from e
     if status == 403:
-        raise CTCForbiddenException("Forbidden access", e) from e
+        raise ForbiddenException("Forbidden access", e) from e
     if status == 429:
-        raise CTCTooManyRequestsException("Rate Limit reached", e) from e
+        raise TooManyRequestsException("Rate Limit reached", e) from e
     if status == 500:
-        raise CTCInternalServerException("Internal server error", e) from e
+        raise InternalServerException("Internal server error", e) from e
     raise e
 
 
@@ -223,7 +229,7 @@ def _on_429_backoff(details):
 
 @backoff.on_exception(
     wait_gen=retry_after_wait_gen,
-    exception=CTCTooManyRequestsException,
+    exception=TooManyRequestsException,
     max_tries=3,
     jitter=None,
     on_backoff=_on_429_backoff,
@@ -231,20 +237,20 @@ def _on_429_backoff(details):
 async def get_token(
         base_url: str,
         username: str,
-        password: pydantic.SecretStr,
-        subscription_key: pydantic.SecretStr
-) -> CTCLoginResponse:
-    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=15.0, pool=5.0)) as session:
+        password: str,
+        subscription_key: str
+) -> LoginResponse:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as session:
         url = f"{base_url}/Authenticate/Login"
 
         headers = {
             "Content-Type": "application/json",
-            "Ocp-Apim-Subscription-Key": subscription_key.get_secret_value()
+            "Ocp-Apim-Subscription-Key": subscription_key
         }
 
         params = {
             "username": username,
-            "password": password.get_secret_value()
+            "password": password
         }
 
         try:
@@ -254,7 +260,7 @@ async def get_token(
             response.raise_for_status()
             parsed_response = response.json()
             if parsed_response:
-                return CTCLoginResponse.parse_obj(parsed_response)
+                return LoginResponse.parse_obj(parsed_response)
             else:
                 logger.warning(f"-- Get token failed for username: {username}: {response.text}  --")
                 return None
@@ -264,7 +270,7 @@ async def get_token(
 
 @backoff.on_exception(
     wait_gen=retry_after_wait_gen,
-    exception=CTCTooManyRequestsException,
+    exception=TooManyRequestsException,
     max_tries=3,
     jitter=None,
     on_backoff=_on_429_backoff,
@@ -272,14 +278,14 @@ async def get_token(
 async def refresh_token(
         base_url: str,
         token: str,
-        subscription_key: pydantic.SecretStr
-) -> CTCLoginResponse:
-    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=15.0, pool=5.0)) as session:
+        subscription_key: str
+) -> LoginResponse:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as session:
         url = f"{base_url}/Authenticate/RefreshToken"
 
         headers = {
             "Content-Type": "application/json",
-            "Ocp-Apim-Subscription-Key": subscription_key.get_secret_value(),
+            "Ocp-Apim-Subscription-Key": subscription_key,
             "x-token": token
         }
 
@@ -290,7 +296,7 @@ async def refresh_token(
             response.raise_for_status()
             parsed_response = response.json()
             if parsed_response:
-                return CTCLoginResponse.parse_obj(parsed_response)
+                return LoginResponse.parse_obj(parsed_response)
             else:
                 return None
         except httpx.HTTPStatusError as e:
@@ -299,22 +305,22 @@ async def refresh_token(
 
 @backoff.on_exception(
     wait_gen=retry_after_wait_gen,
-    exception=CTCTooManyRequestsException,
+    exception=TooManyRequestsException,
     max_tries=3,
     jitter=None,
     on_backoff=_on_429_backoff,
 )
 async def get_vehicles(
         token: str,
-        subscription_key: pydantic.SecretStr,
+        subscription_key: str,
         base_url: str
-) -> CTCGetVehiclesResponse:
-    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=15.0, pool=5.0)) as session:
+) -> GetVehiclesResponse:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as session:
         url = f"{base_url}/Vehicle/GetVehicles"
 
         headers = {
             "Content-Type": "application/json",
-            "Ocp-Apim-Subscription-Key": subscription_key.get_secret_value(),
+            "Ocp-Apim-Subscription-Key": subscription_key,
             "x-token": token
         }
 
@@ -325,33 +331,33 @@ async def get_vehicles(
             response.raise_for_status()
             parsed_response = response.json()
             if parsed_response:
-                return CTCGetVehiclesResponse.parse_obj(parsed_response)
+                return GetVehiclesResponse.parse_obj(parsed_response)
             else:
-                return CTCGetVehiclesResponse()
+                return GetVehiclesResponse()
         except httpx.HTTPStatusError as e:
             handle_httpx_error(e)
 
 
 @backoff.on_exception(
     wait_gen=retry_after_wait_gen,
-    exception=CTCTooManyRequestsException,
+    exception=TooManyRequestsException,
     max_tries=3,
     jitter=None,
     on_backoff=_on_429_backoff,
 )
 async def get_vehicle_trips(
         token: str,
-        subscription_key: pydantic.SecretStr,
+        subscription_key: str,
         base_url: str,
         vehicle_id: str,
         filter_day: datetime
-) -> CTCTripsResponse:
-    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=15.0, pool=5.0)) as session:
+) -> TripsResponse:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as session:
         url = f"{base_url}/Vehicle/Trips"
 
         headers = {
             "Content-Type": "application/json",
-            "Ocp-Apim-Subscription-Key": subscription_key.get_secret_value(),
+            "Ocp-Apim-Subscription-Key": subscription_key,
             "x-token": token
         }
 
@@ -367,32 +373,32 @@ async def get_vehicle_trips(
             response.raise_for_status()
             parsed_response = response.json()
             if parsed_response:
-                return CTCTripsResponse.parse_obj(parsed_response)
+                return TripsResponse.parse_obj(parsed_response)
             else:
-                return CTCTripsResponse()
+                return TripsResponse()
         except httpx.HTTPStatusError as e:
             handle_httpx_error(e)
 
 
 @backoff.on_exception(
     wait_gen=retry_after_wait_gen,
-    exception=CTCTooManyRequestsException,
+    exception=TooManyRequestsException,
     max_tries=3,
     jitter=None,
     on_backoff=_on_429_backoff,
 )
 async def get_trip_summary(
         token: str,
-        subscription_key: pydantic.SecretStr,
+        subscription_key: str,
         base_url: str,
         trip_id: str
-) -> CTCDetailedTripSummaryResponse:
-    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=15.0, pool=5.0)) as session:
+) -> DetailedTripSummaryResponse:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as session:
         url = f"{base_url}/Vehicle/DetailedTripSummary/{trip_id}"
 
         headers = {
             "Content-Type": "application/json",
-            "Ocp-Apim-Subscription-Key": subscription_key.get_secret_value(),
+            "Ocp-Apim-Subscription-Key": subscription_key,
             "x-token": token
         }
 
@@ -406,8 +412,8 @@ async def get_trip_summary(
             response.raise_for_status()
             parsed_response = response.json()
             if parsed_response:
-                return CTCDetailedTripSummaryResponse.parse_obj(parsed_response)
+                return DetailedTripSummaryResponse.parse_obj(parsed_response)
             else:
-                return CTCDetailedTripSummaryResponse()
+                return DetailedTripSummaryResponse()
         except httpx.HTTPStatusError as e:
             handle_httpx_error(e)

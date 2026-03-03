@@ -3,17 +3,17 @@ import httpx
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime, timezone
-from app.actions.client import (
+from app.datasource.ctrack import (
     get_token,
     refresh_token,
     get_vehicles,
     get_vehicle_trips,
     get_trip_summary,
     _get_retry_after,
-    CTCUnauthorizedException,
-    CTCForbiddenException,
-    CTCTooManyRequestsException,
-    CTCInternalServerException,
+    UnauthorizedException,
+    ForbiddenException,
+    TooManyRequestsException,
+    InternalServerException,
 )
 
 
@@ -32,13 +32,13 @@ def _mk_http_error_response(status_code: int):
 
 
 def _mk_429_exception(retry_after_header=None):
-    """Build CTCTooManyRequestsException with optional Retry-After header."""
+    """Build TooManyRequestsException with optional Retry-After header."""
     headers = {} if retry_after_header is None else {"Retry-After": retry_after_header}
     response = MagicMock()
     response.status_code = 429
     response.headers = headers
     http_err = httpx.HTTPStatusError("rate limit", request=MagicMock(), response=response)
-    return CTCTooManyRequestsException("Rate Limit reached", http_err)
+    return TooManyRequestsException("Rate Limit reached", http_err)
 
 
 @pytest.mark.asyncio
@@ -63,17 +63,17 @@ async def test_get_token_success(mocker):
     token = await get_token(
         "http://base.url",
         "user",
-        MagicMock(get_secret_value=lambda: "pass"),
-        MagicMock(get_secret_value=lambda: "subkey")
+        "some-fancy-password",
+        "fancy-subscription-key"
     )
     assert token.jwt == "token123"
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status_code,exception_type", [
-    (401, CTCUnauthorizedException),
-    (403, CTCForbiddenException),
-    (429, CTCTooManyRequestsException),
-    (500, CTCInternalServerException),
+    (401, UnauthorizedException),
+    (403, ForbiddenException),
+    (429, TooManyRequestsException),
+    (500, InternalServerException),
 ])
 async def test_get_token_http_errors(mocker, status_code, exception_type):
     # Avoid backoff actually sleeping on 429 (would wait ~10s per retry, 2 retries)
@@ -105,8 +105,8 @@ async def test_get_token_http_errors(mocker, status_code, exception_type):
         await get_token(
             "http://base.url",
             "user",
-            MagicMock(get_secret_value=lambda: "pass"),
-            MagicMock(get_secret_value=lambda: "subkey")
+            "some-fancy-password",
+            "fancy-subscription-key"
         )
 
 @pytest.mark.asyncio
@@ -129,16 +129,16 @@ async def test_refresh_token_success(mocker):
     token = await refresh_token(
         "http://base.url",
         "token",
-        MagicMock(get_secret_value=lambda: "subkey")
+        "fancy-subscription-key"
     )
     assert token.jwt == "token456"
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status_code,exception_type", [
-    (401, CTCUnauthorizedException),
-    (403, CTCForbiddenException),
-    (429, CTCTooManyRequestsException),
-    (500, CTCInternalServerException),
+    (401, UnauthorizedException),
+    (403, ForbiddenException),
+    (429, TooManyRequestsException),
+    (500, InternalServerException),
 ])
 async def test_refresh_token_http_errors(mocker, status_code, exception_type):
     # Avoid backoff actually sleeping on 429 (would wait ~10s per retry, 2 retries)
@@ -170,7 +170,7 @@ async def test_refresh_token_http_errors(mocker, status_code, exception_type):
         await refresh_token(
             "http://base.url",
             "token123",
-            MagicMock(get_secret_value=lambda: "subkey")
+            "fancy-subscription-key"
         )
 
 @pytest.mark.asyncio
@@ -199,17 +199,16 @@ async def test_get_vehicles_success(mocker):
 
     integration = MagicMock()
     integration.id = "integration_id"
-    subscription_key = MagicMock(get_secret_value=lambda: "subkey")
 
-    vehicles_response = await get_vehicles("token123", subscription_key, "http://base.url")
+    vehicles_response = await get_vehicles("token123", "fancy-subscription-key", "http://base.url")
     assert vehicles_response.count == 1
     assert vehicles_response.vehicles[0].id == "veh1"
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status_code,exception_type", [
-    (401, CTCUnauthorizedException),
-    (403, CTCForbiddenException),
-    (500, CTCInternalServerException),
+    (401, UnauthorizedException),
+    (403, ForbiddenException),
+    (500, InternalServerException),
 ])
 async def test_get_vehicles_http_errors(mocker, status_code, exception_type):
     response = _mk_http_error_response(status_code)
@@ -225,11 +224,8 @@ async def test_get_vehicles_http_errors(mocker, status_code, exception_type):
     mocker.patch("app.actions.handlers.retrieve_token",
                  AsyncMock(return_value=SimpleNamespace(jwt="token123")))
 
-    integration = SimpleNamespace(id="integration_id")
-    subscription_key = MagicMock(get_secret_value=lambda: "subkey")
-
     with pytest.raises(exception_type):
-        await get_vehicles("token123", subscription_key, "http://base.url")
+        await get_vehicles("token123", "fancy-subscription-key", "http://base.url")
 
 @pytest.mark.asyncio
 async def test_get_vehicle_trips_success(mocker):
@@ -257,11 +253,10 @@ async def test_get_vehicle_trips_success(mocker):
 
     integration = MagicMock()
     integration.id = "integration_id"
-    subscription_key = MagicMock(get_secret_value=lambda: "subkey")
 
     trips_response = await get_vehicle_trips(
         "token123",
-        subscription_key,
+        "fancy-subscription-key",
         "http://base.url",
         "veh1",
         datetime.now(timezone.utc)
@@ -271,9 +266,9 @@ async def test_get_vehicle_trips_success(mocker):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status_code,exception_type", [
-    (401, CTCUnauthorizedException),
-    (403, CTCForbiddenException),
-    (500, CTCInternalServerException),
+    (401, UnauthorizedException),
+    (403, ForbiddenException),
+    (500, InternalServerException),
 ])
 async def test_get_vehicle_trips_http_errors(mocker, status_code, exception_type):
     # Use the same pattern as other *_http_errors tests: post returns a response
@@ -292,12 +287,11 @@ async def test_get_vehicle_trips_http_errors(mocker, status_code, exception_type
 
     integration = MagicMock()
     integration.id = "integration_id"
-    subscription_key = MagicMock(get_secret_value=lambda: "subkey")
 
     with pytest.raises(exception_type):
         await get_vehicle_trips(
             "token123",
-            subscription_key,
+            "fancy-subscription-key",
             "http://base.url",
             "veh1",
             datetime.now(timezone.utc)
@@ -329,21 +323,20 @@ async def test_get_trip_summary_success(mocker):
 
     integration = MagicMock()
     integration.id = "integration_id"
-    subscription_key = MagicMock(get_secret_value=lambda: "subkey")
 
     trip_summary = await get_trip_summary(
         "token123",
-        subscription_key,
+        "fancy-subscription-key",
         "http://base.url",
         "trip1"
     )
-    assert len(trip_summary.location_summary) == 1
+    assert len(trip_summary.locationSummary) == 1
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status_code,exception_type", [
-    (401, CTCUnauthorizedException),
-    (403, CTCForbiddenException),
-    (500, CTCInternalServerException),
+    (401, UnauthorizedException),
+    (403, ForbiddenException),
+    (500, InternalServerException),
 ])
 async def test_get_trip_summary_http_errors(mocker, status_code, exception_type):
     response = _mk_http_error_response(status_code)
@@ -359,12 +352,10 @@ async def test_get_trip_summary_http_errors(mocker, status_code, exception_type)
     mocker.patch("app.actions.handlers.retrieve_token",
                  AsyncMock(return_value=SimpleNamespace(jwt="token123")))
 
-    subscription_key = MagicMock(get_secret_value=lambda: "subkey")
-
     with pytest.raises(exception_type):
         await get_trip_summary(
             "token123",
-            subscription_key,
+            "fancy-subscription-key",
             "http://base.url",
             "trip1"
         )
