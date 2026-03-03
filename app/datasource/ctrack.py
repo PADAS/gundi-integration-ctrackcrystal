@@ -11,7 +11,7 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 
 # Read timeout: Ctrack trip/list and trip-summary endpoints can be slow; use a long read to avoid ReadTimeout.
-CTRACK_TIMEOUT = httpx.Timeout(connect=10.0, read=90.0)
+CTRACK_TIMEOUT = httpx.Timeout(5.0, read=90.0)
 
 class UTCNormalizedModel(pydantic.BaseModel):
     @pydantic.root_validator
