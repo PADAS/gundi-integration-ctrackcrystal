@@ -50,6 +50,7 @@ async def with_ctrack_semaphore(integration_id: str, coro):
 CTC_BASE_URL = "https://apim.ctrackcrystal.com/api"
 INVALID_TRIP_ID = "0"
 MAX_TOKEN_DISPLAY_LENGTH = 100
+MAX_PULL_LOOKBACK_DAYS = 3
 
 
 def date_range(start_date: date, end_date: date):
@@ -260,12 +261,18 @@ async def action_pull_observations(integration: Integration, action_config: Pull
                 source_id=vehicle.id,
             )
             vehicle_updated_at = vehicle_state.get("updated_at") if vehicle_state else None
+            now = datetime.now(timezone.utc)
+            min_filter_day = datetime.combine(
+                (now - timedelta(days=MAX_PULL_LOOKBACK_DAYS)).date(),
+                datetime.min.time(),
+            ).replace(tzinfo=timezone.utc)
             if vehicle_updated_at:
                 vehicle_last_updated = datetime.fromisoformat(vehicle_updated_at).replace(tzinfo=timezone.utc)
-                filter_day = vehicle_last_updated
-                logger.info(f"Vehicle {vehicle.id} last processed at {vehicle_last_updated.isoformat()}. Fetching trips from that date...")
+                filter_day = max(vehicle_last_updated, min_filter_day)
+                filter_day = datetime.combine(filter_day.date(), datetime.min.time()).replace(tzinfo=timezone.utc)
+                logger.info(f"Vehicle {vehicle.id} last processed at {vehicle_last_updated.isoformat()}. Fetching trips from {filter_day.date()} (capped at {MAX_PULL_LOOKBACK_DAYS} days lookback)...")
             else:
-                filter_day = datetime.now(timezone.utc) - timedelta(days=1)
+                filter_day = now - timedelta(days=1)
                 logger.info(f"Vehicle {vehicle.id} has no last processed date. Fetching trips from yesterday...")
 
             parsed_config = PullVehicleTripsConfig(
