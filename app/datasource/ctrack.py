@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 # Read timeout: Ctrack trip/list and trip-summary endpoints can be slow; use a long read to avoid ReadTimeout.
 CTRACK_TIMEOUT = httpx.Timeout(5.0, read=90.0)
+# Seconds to wait before retrying on 5xx (502, 503, 504, 500).
+SERVER_ERROR_BACKOFF_SECONDS = 15
 
 class UTCNormalizedModel(pydantic.BaseModel):
     @pydantic.root_validator
@@ -181,8 +183,12 @@ def handle_httpx_error(e):
         raise ForbiddenException("Forbidden access", e) from e
     if status == 429:
         raise TooManyRequestsException("Rate Limit reached", e) from e
-    if status == 500:
-        raise InternalServerException("Internal server error", e) from e
+    if status in (500, 502, 503, 504):
+        raise InternalServerException(
+            f"Server error ({status})",
+            e,
+            status_code=status,
+        ) from e
     raise e
 
 
@@ -212,29 +218,45 @@ def _get_retry_after(exc):
     return max(retry_after, 1)
 
 
+def _wait_seconds_for_exception(exc):
+    """Return wait time in seconds: Retry-After for 429, fixed delay for 5xx."""
+    if exc is None:
+        return 10
+    if isinstance(exc, InternalServerException):
+        return SERVER_ERROR_BACKOFF_SECONDS
+    return _get_retry_after(exc)
+
+
 def retry_after_wait_gen():
     """Generator used by backoff: receives the exception via .send(exception)."""
     exc = None
     while True:
-        wait = _get_retry_after(exc)
+        wait = _wait_seconds_for_exception(exc)
         exc = yield wait
 
 
-def _on_429_backoff(details):
+def _on_retry_backoff(details):
     wait = details.get("wait", 10)
     tries = details.get("tries", 0)
-    logger.warning(
-        "Rate limit (429) from Ctrack Crystal API, retrying in %ss (attempt %s/3)",
-        wait, tries,
-    )
+    exc = details.get("exception")
+    if exc is not None and isinstance(exc, InternalServerException):
+        logger.warning(
+            "Server error (%s) from Ctrack Crystal API, retrying in %ss (attempt %s/3)",
+            getattr(exc, "status_code", "5xx"), wait, tries,
+        )
+    else:
+        logger.warning(
+            "Rate limit (429) from Ctrack Crystal API, retrying in %ss (attempt %s/3)",
+            wait, tries,
+        )
 
 
 @backoff.on_exception(
     wait_gen=retry_after_wait_gen,
-    exception=TooManyRequestsException,
+    exception=(TooManyRequestsException, InternalServerException),
     max_tries=3,
     jitter=None,
-    on_backoff=_on_429_backoff,
+    on_backoff=_on_retry_backoff,
 )
 async def get_token(
         base_url: str,
@@ -272,10 +294,10 @@ async def get_token(
 
 @backoff.on_exception(
     wait_gen=retry_after_wait_gen,
-    exception=TooManyRequestsException,
+    exception=(TooManyRequestsException, InternalServerException),
     max_tries=3,
     jitter=None,
-    on_backoff=_on_429_backoff,
+    on_backoff=_on_retry_backoff,
 )
 async def refresh_token(
         base_url: str,
@@ -307,10 +329,10 @@ async def refresh_token(
 
 @backoff.on_exception(
     wait_gen=retry_after_wait_gen,
-    exception=TooManyRequestsException,
+    exception=(TooManyRequestsException, InternalServerException),
     max_tries=3,
     jitter=None,
-    on_backoff=_on_429_backoff,
+    on_backoff=_on_retry_backoff,
 )
 async def get_vehicles(
         token: str,
@@ -342,10 +364,10 @@ async def get_vehicles(
 
 @backoff.on_exception(
     wait_gen=retry_after_wait_gen,
-    exception=TooManyRequestsException,
+    exception=(TooManyRequestsException, InternalServerException),
     max_tries=3,
     jitter=None,
-    on_backoff=_on_429_backoff,
+    on_backoff=_on_retry_backoff,
 )
 async def get_vehicle_trips(
         token: str,
@@ -384,10 +406,10 @@ async def get_vehicle_trips(
 
 @backoff.on_exception(
     wait_gen=retry_after_wait_gen,
-    exception=TooManyRequestsException,
+    exception=(TooManyRequestsException, InternalServerException),
     max_tries=3,
     jitter=None,
-    on_backoff=_on_429_backoff,
+    on_backoff=_on_retry_backoff,
 )
 async def get_trip_summary(
         token: str,
