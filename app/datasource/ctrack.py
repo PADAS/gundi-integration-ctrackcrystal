@@ -10,6 +10,8 @@ from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Read timeout is the most common issue with APIs we use, so set it quite long.
+CTRACK_TIMEOUT= httpx.Timeout(5.0, read=30.0)
 
 class UTCNormalizedModel(pydantic.BaseModel):
     @pydantic.root_validator
@@ -240,7 +242,7 @@ async def get_token(
         password: str,
         subscription_key: str
 ) -> LoginResponse:
-    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as session:
+    async with httpx.AsyncClient(timeout=CTRACK_TIMEOUT) as session:
         url = f"{base_url}/Authenticate/Login"
 
         headers = {
@@ -280,7 +282,7 @@ async def refresh_token(
         token: str,
         subscription_key: str
 ) -> LoginResponse:
-    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as session:
+    async with httpx.AsyncClient(timeout=CTRACK_TIMEOUT) as session:
         url = f"{base_url}/Authenticate/RefreshToken"
 
         headers = {
@@ -315,7 +317,7 @@ async def get_vehicles(
         subscription_key: str,
         base_url: str
 ) -> GetVehiclesResponse:
-    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as session:
+    async with httpx.AsyncClient(timeout=CTRACK_TIMEOUT) as session:
         url = f"{base_url}/Vehicle/GetVehicles"
 
         headers = {
@@ -352,7 +354,7 @@ async def get_vehicle_trips(
         vehicle_id: str,
         filter_day: datetime
 ) -> TripsResponse:
-    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as session:
+    async with httpx.AsyncClient(timeout=CTRACK_TIMEOUT) as session:
         url = f"{base_url}/Vehicle/Trips"
 
         headers = {
@@ -393,7 +395,7 @@ async def get_trip_summary(
         base_url: str,
         trip_id: str
 ) -> DetailedTripSummaryResponse:
-    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as session:
+    async with httpx.AsyncClient(timeout=CTRACK_TIMEOUT) as session:
         url = f"{base_url}/Vehicle/DetailedTripSummary/{trip_id}"
 
         headers = {
