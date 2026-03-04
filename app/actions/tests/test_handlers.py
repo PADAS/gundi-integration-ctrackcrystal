@@ -134,7 +134,8 @@ async def test_action_pull_observations_fetches_vehicle_trips_inline(mocker, moc
 
     assert result["status"] == "success"
     assert result["vehicles_processed"] == 1
-    assert result["observations_extracted"] == 1
+    # With multi-day catchup, a vehicle with no prior state processes yesterday + today (2 days)
+    assert result["observations_extracted"] == 2
 
 
 @pytest.mark.asyncio

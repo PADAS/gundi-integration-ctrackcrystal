@@ -211,6 +211,8 @@ async def test_get_vehicles_success(mocker):
     (500, InternalServerException),
 ])
 async def test_get_vehicles_http_errors(mocker, status_code, exception_type):
+    mocker.patch("asyncio.sleep", new_callable=AsyncMock)
+
     response = _mk_http_error_response(status_code)
 
     session = AsyncMock()
@@ -271,8 +273,8 @@ async def test_get_vehicle_trips_success(mocker):
     (500, InternalServerException),
 ])
 async def test_get_vehicle_trips_http_errors(mocker, status_code, exception_type):
-    # Use the same pattern as other *_http_errors tests: post returns a response
-    # whose raise_for_status triggers the httpx.HTTPStatusError.
+    mocker.patch("asyncio.sleep", new_callable=AsyncMock)
+
     response = _mk_http_error_response(status_code)
 
     session = AsyncMock()
@@ -339,6 +341,8 @@ async def test_get_trip_summary_success(mocker):
     (500, InternalServerException),
 ])
 async def test_get_trip_summary_http_errors(mocker, status_code, exception_type):
+    mocker.patch("asyncio.sleep", new_callable=AsyncMock)
+
     response = _mk_http_error_response(status_code)
 
     session = AsyncMock()

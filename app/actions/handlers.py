@@ -96,6 +96,7 @@ async def _fetch_one_vehicle_trips_observations(
     auth_config: AuthenticateConfig,
     base_url: str,
     action_config: PullVehicleTripsConfig,
+    integration_id: str = "",
 ) -> Tuple[List[dict], int]:
     """
     Fetch trips and trip summaries for one vehicle/filter_day and return transformed observations.
@@ -111,6 +112,9 @@ async def _fetch_one_vehicle_trips_observations(
         action_config.filter_day,
     )
     if not trips_response:
+        logger.warning(
+            f"No trips response returned for vehicle {action_config.vehicle_id} on {action_config.filter_day.date()}"
+        )
         return [], 0
 
     for trip in trips_response.payload:
@@ -143,6 +147,14 @@ async def _fetch_one_vehicle_trips_observations(
                 logger.warning(
                     f"-- No trip summary returned for trip {trip_detail.trip_id} Vehicle ID {action_config.vehicle_id} --"
                 )
+                if integration_id:
+                    await log_action_activity(
+                        integration_id=integration_id,
+                        action_id="pull_observations",
+                        title=f"Trip {trip_detail.trip_id}: no location data returned",
+                        level=LogLevel.WARNING,
+                        data={"vehicle_id": action_config.vehicle_id, "trip_id": trip_detail.trip_id},
+                    )
 
     return transformed_data, len(transformed_data)
 
@@ -232,6 +244,7 @@ async def action_pull_observations(integration: Integration, action_config: Pull
     logger.info(f"Executing 'pull_observations' action with integration ID {integration.id} and action_config {action_config}...")
 
     vehicles_processed = 0
+    vehicles_failed = 0
     total_observations = 0
     base_url = integration.base_url or CTC_BASE_URL
     auth_config = get_auth_config(integration)
@@ -251,67 +264,134 @@ async def action_pull_observations(integration: Integration, action_config: Pull
 
         logger.info(f"-- Extracted {len(vehicles_response.vehicles)} vehicles username: {auth_config.username}, Integration ID: {integration.id} --")
 
+        # Location 1: Log vehicle count after fetching
+        await log_action_activity(
+            integration_id=str(integration.id),
+            action_id="pull_observations",
+            title=f"Found {len(vehicles_response.vehicles)} vehicles to process",
+            level=LogLevel.INFO,
+        )
+
         for vehicle in vehicles_response.vehicles:
-            logger.info(f"Fetching trips for vehicle {vehicle.id} to extract observations...")
+            try:
+                logger.info(f"Fetching trips for vehicle {vehicle.id} to extract observations...")
 
-            vehicle_last_updated: Optional[datetime] = None
-            vehicle_state = await state_manager.get_state(
-                integration_id=integration.id,
-                action_id="pull_observations",
-                source_id=vehicle.id,
-            )
-            vehicle_updated_at = vehicle_state.get("updated_at") if vehicle_state else None
-            now = datetime.now(timezone.utc)
-            min_filter_day = datetime.combine(
-                (now - timedelta(days=MAX_PULL_LOOKBACK_DAYS)).date(),
-                datetime.min.time(),
-            ).replace(tzinfo=timezone.utc)
-            if vehicle_updated_at:
-                vehicle_last_updated = datetime.fromisoformat(vehicle_updated_at).replace(tzinfo=timezone.utc)
-                filter_day = max(vehicle_last_updated, min_filter_day)
-                filter_day = datetime.combine(filter_day.date(), datetime.min.time()).replace(tzinfo=timezone.utc)
-                logger.info(f"Vehicle {vehicle.id} last processed at {vehicle_last_updated.isoformat()}. Fetching trips from {filter_day.date()} (capped at {MAX_PULL_LOOKBACK_DAYS} days lookback)...")
-            else:
-                filter_day = now - timedelta(days=1)
-                logger.info(f"Vehicle {vehicle.id} has no last processed date. Fetching trips from yesterday...")
-
-            parsed_config = PullVehicleTripsConfig(
-                vehicle_id=vehicle.id,
-                vehicle_serial_number=vehicle.serial_number,
-                vehicle_display_name=vehicle.display_name,
-                vehicle_last_updated=vehicle_last_updated,
-                filter_day=filter_day,
-                save_vehicle_state=True,
-            )
-
-            async def _fetch_this_vehicle():
-                return await _fetch_one_vehicle_trips_observations(
-                    token, auth_config, base_url, parsed_config
-                )
-
-            transformed_data, obs_count = await with_ctrack_semaphore(integration.id, _fetch_this_vehicle())
-
-            if transformed_data:
-                logger.info(
-                    f"Extracted {len(transformed_data)} observations for vehicle {vehicle.id} from {filter_day.strftime('%Y-%m-%d')}"
-                )
-                for i, batch in enumerate(generate_batches(transformed_data, 200)):
-                    logger.info(f"Sending observations batch #{i}: {len(batch)} observations. Vehicle: {vehicle.id}")
-                    response = await send_observations_to_gundi(observations=batch, integration_id=integration.id)
-                    total_observations += len(response)
-                latest_time = max(transformed_data, key=lambda obs: obs["recorded_at"])["recorded_at"]
-                await state_manager.set_state(
+                vehicle_last_updated: Optional[datetime] = None
+                vehicle_state = await state_manager.get_state(
                     integration_id=integration.id,
                     action_id="pull_observations",
-                    state={"updated_at": latest_time.isoformat()},
                     source_id=vehicle.id,
                 )
-            else:
-                logger.info(f"No new observations to extract for vehicle {vehicle.id}")
+                vehicle_updated_at = vehicle_state.get("updated_at") if vehicle_state else None
+                now = datetime.now(timezone.utc)
+                min_filter_day = datetime.combine(
+                    (now - timedelta(days=MAX_PULL_LOOKBACK_DAYS)).date(),
+                    datetime.min.time(),
+                ).replace(tzinfo=timezone.utc)
+                today = datetime.combine(now.date(), datetime.min.time()).replace(tzinfo=timezone.utc)
 
-            vehicles_processed += 1
+                if vehicle_updated_at:
+                    vehicle_last_updated = datetime.fromisoformat(vehicle_updated_at).replace(tzinfo=timezone.utc)
+                    start_filter_day = max(vehicle_last_updated, min_filter_day)
+                    start_filter_day = datetime.combine(start_filter_day.date(), datetime.min.time()).replace(tzinfo=timezone.utc)
+                    logger.info(f"Vehicle {vehicle.id} last processed at {vehicle_last_updated.isoformat()}. Fetching trips from {start_filter_day.date()} to {today.date()} (capped at {MAX_PULL_LOOKBACK_DAYS} days lookback)...")
+                else:
+                    start_filter_day = now - timedelta(days=1)
+                    start_filter_day = datetime.combine(start_filter_day.date(), datetime.min.time()).replace(tzinfo=timezone.utc)
+                    logger.info(f"Vehicle {vehicle.id} has no last processed date. Fetching trips from yesterday...")
 
-        return {"status": "success", "vehicles_processed": vehicles_processed, "observations_extracted": total_observations}
+                # Fix C: Multi-day catchup — loop through all days from start_filter_day to today
+                vehicle_obs_count = 0
+                for filter_day in date_range(start_filter_day.date(), today.date()):
+                    parsed_config = PullVehicleTripsConfig(
+                        vehicle_id=vehicle.id,
+                        vehicle_serial_number=vehicle.serial_number,
+                        vehicle_display_name=vehicle.display_name,
+                        vehicle_last_updated=vehicle_last_updated,
+                        filter_day=filter_day,
+                        save_vehicle_state=True,
+                    )
+
+                    async def _fetch_this_vehicle():
+                        return await _fetch_one_vehicle_trips_observations(
+                            token, auth_config, base_url, parsed_config,
+                            integration_id=str(integration.id),
+                        )
+
+                    transformed_data, obs_count = await with_ctrack_semaphore(integration.id, _fetch_this_vehicle())
+
+                    if transformed_data:
+                        logger.info(
+                            f"Extracted {len(transformed_data)} observations for vehicle {vehicle.id} from {filter_day.strftime('%Y-%m-%d')}"
+                        )
+                        for i, batch in enumerate(generate_batches(transformed_data, 200)):
+                            logger.info(f"Sending observations batch #{i}: {len(batch)} observations. Vehicle: {vehicle.id}")
+                            response = await send_observations_to_gundi(observations=batch, integration_id=integration.id)
+                            total_observations += len(response)
+                            vehicle_obs_count += len(response)
+                        latest_time = max(transformed_data, key=lambda obs: obs["recorded_at"])["recorded_at"]
+                        await state_manager.set_state(
+                            integration_id=integration.id,
+                            action_id="pull_observations",
+                            state={"updated_at": latest_time.isoformat()},
+                            source_id=vehicle.id,
+                        )
+                    else:
+                        logger.info(f"No new observations for vehicle {vehicle.id} on {filter_day.date()}")
+                        # Fix A: Advance state to end-of-day so next run queries the next day
+                        end_of_day = filter_day + timedelta(hours=23, minutes=59, seconds=59)
+                        if not vehicle_last_updated or end_of_day > vehicle_last_updated:
+                            await state_manager.set_state(
+                                integration_id=integration.id,
+                                action_id="pull_observations",
+                                state={"updated_at": end_of_day.isoformat()},
+                                source_id=vehicle.id,
+                            )
+                        # Location 4: Log when no trips found for a vehicle on a day
+                        await log_action_activity(
+                            integration_id=str(integration.id),
+                            action_id="pull_observations",
+                            title=f"Vehicle {vehicle.id}: 0 observations on {filter_day.date()}",
+                            level=LogLevel.WARNING,
+                            data={"vehicle_id": vehicle.id, "filter_day": str(filter_day.date())},
+                        )
+
+                vehicles_processed += 1
+
+                # Location 2: Per-vehicle results
+                await log_action_activity(
+                    integration_id=str(integration.id),
+                    action_id="pull_observations",
+                    title=f"Vehicle {vehicle.id}: {vehicle_obs_count} observations from {start_filter_day.date()} to {today.date()}",
+                    level=LogLevel.INFO,
+                    data={"vehicle_id": vehicle.id, "start_day": str(start_filter_day.date()), "end_day": str(today.date()), "observations": vehicle_obs_count},
+                )
+
+            # Fix B: Per-vehicle exception isolation
+            except client.TooManyRequestsException:
+                # Re-raise rate limits — these affect all vehicles, not just this one
+                raise
+            except Exception as e:
+                vehicles_failed += 1
+                logger.exception(f"Failed to process vehicle {vehicle.id} from integration ID {integration.id}: {e}")
+                await log_action_activity(
+                    integration_id=str(integration.id),
+                    action_id="pull_observations",
+                    title=f"Vehicle {vehicle.id}: processing failed",
+                    level=LogLevel.ERROR,
+                    data={"vehicle_id": vehicle.id, "error": str(e)},
+                )
+
+        # Location 3: End-of-action summary
+        await log_action_activity(
+            integration_id=str(integration.id),
+            action_id="pull_observations",
+            title=f"Completed: {vehicles_processed} vehicles, {total_observations} observations" + (f", {vehicles_failed} failed" if vehicles_failed else ""),
+            level=LogLevel.INFO,
+            data={"vehicles_processed": vehicles_processed, "vehicles_failed": vehicles_failed, "observations_extracted": total_observations},
+        )
+
+        return {"status": "success", "vehicles_processed": vehicles_processed, "vehicles_failed": vehicles_failed, "observations_extracted": total_observations}
     except client.TooManyRequestsException:
         logger.warning("Rate limit (429) from Ctrack Crystal API")
         raise
@@ -356,7 +436,8 @@ async def action_trigger_fetch_vehicle_observations(integration, action_config: 
 
             async def _fetch_for_day():
                 return await _fetch_one_vehicle_trips_observations(
-                    token, auth_config, base_url, parsed_config
+                    token, auth_config, base_url, parsed_config,
+                    integration_id=str(integration.id),
                 )
 
             transformed_data, obs_count = await with_ctrack_semaphore(integration.id, _fetch_for_day())
@@ -381,7 +462,7 @@ async def action_fetch_vehicle_trips(integration, action_config: PullVehicleTrip
     async def _do_fetch():
         token = await retrieve_token(integration, base_url)
         logger.info(f"-- Getting vehicle trips for integration ID: {integration.id} Vehicle ID: {action_config.vehicle_id} --")
-        return await _fetch_one_vehicle_trips_observations(token, auth_config, base_url, action_config)
+        return await _fetch_one_vehicle_trips_observations(token, auth_config, base_url, action_config, integration_id=str(integration.id))
 
     try:
         transformed_data, _ = await with_ctrack_semaphore(integration.id, _do_fetch())
