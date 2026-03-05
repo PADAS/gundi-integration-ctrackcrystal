@@ -347,14 +347,14 @@ async def action_pull_observations(integration: Integration, action_config: Pull
                                 state={"updated_at": end_of_day.isoformat()},
                                 source_id=vehicle.id,
                             )
-                        # Location 4: Log when no trips found for a vehicle on a day
-                        await log_action_activity(
-                            integration_id=str(integration.id),
-                            action_id="pull_observations",
-                            title=f"Vehicle {vehicle.id}: 0 observations on {filter_day.date()}",
-                            level=LogLevel.WARNING,
-                            data={"vehicle_id": vehicle.id, "filter_day": str(filter_day.date())},
-                        )
+                        # # Location 4: Log when no trips found for a vehicle on a day
+                        # await log_action_activity(
+                        #     integration_id=str(integration.id),
+                        #     action_id="pull_observations",
+                        #     title=f"Vehicle {vehicle.id}: 0 observations on {filter_day.date()}",
+                        #     level=LogLevel.WARNING,
+                        #     data={"vehicle_id": vehicle.id, "filter_day": str(filter_day.date())},
+                        # )
 
                 vehicles_processed += 1
 
