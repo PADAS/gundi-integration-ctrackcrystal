@@ -2,19 +2,19 @@ import pytest
 import httpx
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
-from datetime import datetime, timezone
-from app.datasource.ctrack import (
-    get_token,
+from datetime import datetime, timezone, date
+from app.datasource.ctrackcrystal import (
+    login,
     refresh_token,
     get_vehicles,
-    get_vehicle_trips,
-    get_trip_summary,
-    _get_retry_after,
+    get_trips,
+    get_detailed_trip_summary,
     UnauthorizedException,
     ForbiddenException,
     TooManyRequestsException,
     InternalServerException,
 )
+from app.datasource.ctrackcrystal.client import _get_retry_after
 
 
 def _mk_http_error_response(status_code: int):
@@ -42,8 +42,7 @@ def _mk_429_exception(retry_after_header=None):
 
 
 @pytest.mark.asyncio
-async def test_get_token_success(mocker):
-    # Mock response object
+async def test_login_success(mocker):
     mock_response = MagicMock()
     mock_response.is_error = False
     mock_response.json.return_value = {
@@ -52,7 +51,6 @@ async def test_get_token_success(mocker):
     }
     mock_response.raise_for_status = MagicMock()
 
-    # Mock AsyncClient as async context manager
     mock_post = AsyncMock(return_value=mock_response)
     mock_client = AsyncMock()
     mock_client.__aenter__.return_value.post = mock_post
@@ -60,13 +58,15 @@ async def test_get_token_success(mocker):
 
     mocker.patch("httpx.AsyncClient", return_value=mock_client)
 
-    token = await get_token(
+    token = await login(
         "http://base.url",
         "user",
         "some-fancy-password",
         "fancy-subscription-key"
     )
+    assert token is not None
     assert token.jwt == "token123"
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status_code,exception_type", [
@@ -75,11 +75,9 @@ async def test_get_token_success(mocker):
     (429, TooManyRequestsException),
     (500, InternalServerException),
 ])
-async def test_get_token_http_errors(mocker, status_code, exception_type):
-    # Avoid backoff actually sleeping on 429 (would wait ~10s per retry, 2 retries)
+async def test_login_http_errors(mocker, status_code, exception_type):
     mocker.patch("asyncio.sleep", new_callable=AsyncMock)
 
-    # Build a fake response whose raise_for_status raises the HTTPStatusError
     response = MagicMock()
     response.is_error = True
     response.status_code = status_code
@@ -91,23 +89,22 @@ async def test_get_token_http_errors(mocker, status_code, exception_type):
     )
     response.raise_for_status.side_effect = http_err
 
-    # session.post returns the response (no exception yet)
     session = AsyncMock()
     session.post = AsyncMock(return_value=response)
 
-    # Proper async context manager for httpx.AsyncClient
     client_cm = AsyncMock()
     client_cm.__aenter__.return_value = session
     client_cm.__aexit__.return_value = False
     mocker.patch("httpx.AsyncClient", return_value=client_cm)
 
     with pytest.raises(exception_type):
-        await get_token(
+        await login(
             "http://base.url",
             "user",
             "some-fancy-password",
             "fancy-subscription-key"
         )
+
 
 @pytest.mark.asyncio
 async def test_refresh_token_success(mocker):
@@ -131,7 +128,9 @@ async def test_refresh_token_success(mocker):
         "token",
         "fancy-subscription-key"
     )
+    assert token is not None
     assert token.jwt == "token456"
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status_code,exception_type", [
@@ -141,10 +140,8 @@ async def test_refresh_token_success(mocker):
     (500, InternalServerException),
 ])
 async def test_refresh_token_http_errors(mocker, status_code, exception_type):
-    # Avoid backoff actually sleeping on 429 (would wait ~10s per retry, 2 retries)
     mocker.patch("asyncio.sleep", new_callable=AsyncMock)
 
-    # Response whose raise_for_status raises the httpx.HTTPStatusError
     response = MagicMock()
     response.is_error = True
     response.status_code = status_code
@@ -156,11 +153,9 @@ async def test_refresh_token_http_errors(mocker, status_code, exception_type):
     )
     response.raise_for_status.side_effect = http_err
 
-    # session.post returns the response
     session = AsyncMock()
     session.post = AsyncMock(return_value=response)
 
-    # Proper async context manager
     client_cm = AsyncMock()
     client_cm.__aenter__.return_value = session
     client_cm.__aexit__.return_value = False
@@ -172,6 +167,7 @@ async def test_refresh_token_http_errors(mocker, status_code, exception_type):
             "token123",
             "fancy-subscription-key"
         )
+
 
 @pytest.mark.asyncio
 async def test_get_vehicles_success(mocker):
@@ -195,14 +191,15 @@ async def test_get_vehicles_success(mocker):
     mock_client.__aexit__.return_value = AsyncMock()
 
     mocker.patch("httpx.AsyncClient", return_value=mock_client)
-    mocker.patch("app.actions.handlers.retrieve_token", return_value=AsyncMock(jwt="token123"))
 
-    integration = MagicMock()
-    integration.id = "integration_id"
-
-    vehicles_response = await get_vehicles("token123", "fancy-subscription-key", "http://base.url")
+    vehicles_response = await get_vehicles(
+        "http://base.url",
+        "token123",
+        "fancy-subscription-key"
+    )
     assert vehicles_response.count == 1
     assert vehicles_response.vehicles[0].id == "veh1"
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status_code,exception_type", [
@@ -223,14 +220,16 @@ async def test_get_vehicles_http_errors(mocker, status_code, exception_type):
     client_cm.__aexit__.return_value = False
     mocker.patch("httpx.AsyncClient", return_value=client_cm)
 
-    mocker.patch("app.actions.handlers.retrieve_token",
-                 AsyncMock(return_value=SimpleNamespace(jwt="token123")))
-
     with pytest.raises(exception_type):
-        await get_vehicles("token123", "fancy-subscription-key", "http://base.url")
+        await get_vehicles(
+            "http://base.url",
+            "token123",
+            "fancy-subscription-key"
+        )
+
 
 @pytest.mark.asyncio
-async def test_get_vehicle_trips_success(mocker):
+async def test_get_trips_success(mocker):
     mock_response = MagicMock()
     mock_response.is_error = False
     mock_response.json.return_value = {
@@ -251,20 +250,17 @@ async def test_get_vehicle_trips_success(mocker):
     mock_client.__aexit__.return_value = AsyncMock()
 
     mocker.patch("httpx.AsyncClient", return_value=mock_client)
-    mocker.patch("app.actions.handlers.retrieve_token", return_value=AsyncMock(jwt="token123"))
 
-    integration = MagicMock()
-    integration.id = "integration_id"
-
-    trips_response = await get_vehicle_trips(
+    trips_response = await get_trips(
+        "http://base.url",
         "token123",
         "fancy-subscription-key",
-        "http://base.url",
-        "veh1",
-        datetime.now(timezone.utc)
+        ["veh1"],
+        date.today()
     )
     assert trips_response.count == 1
     assert trips_response.payload[0].id == "trip1"
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status_code,exception_type", [
@@ -272,7 +268,7 @@ async def test_get_vehicle_trips_success(mocker):
     (403, ForbiddenException),
     (500, InternalServerException),
 ])
-async def test_get_vehicle_trips_http_errors(mocker, status_code, exception_type):
+async def test_get_trips_http_errors(mocker, status_code, exception_type):
     mocker.patch("asyncio.sleep", new_callable=AsyncMock)
 
     response = _mk_http_error_response(status_code)
@@ -285,22 +281,18 @@ async def test_get_vehicle_trips_http_errors(mocker, status_code, exception_type
     client_cm.__aexit__.return_value = False
     mocker.patch("httpx.AsyncClient", return_value=client_cm)
 
-    mocker.patch("app.actions.handlers.retrieve_token", return_value=AsyncMock(jwt="token123"))
-
-    integration = MagicMock()
-    integration.id = "integration_id"
-
     with pytest.raises(exception_type):
-        await get_vehicle_trips(
+        await get_trips(
+            "http://base.url",
             "token123",
             "fancy-subscription-key",
-            "http://base.url",
-            "veh1",
-            datetime.now(timezone.utc)
+            ["veh1"],
+            date.today()
         )
 
+
 @pytest.mark.asyncio
-async def test_get_trip_summary_success(mocker):
+async def test_get_detailed_trip_summary_success(mocker):
     mock_response = MagicMock()
     mock_response.is_error = False
     mock_response.json.return_value = {
@@ -321,18 +313,15 @@ async def test_get_trip_summary_success(mocker):
     mock_client.__aexit__.return_value = AsyncMock()
 
     mocker.patch("httpx.AsyncClient", return_value=mock_client)
-    mocker.patch("app.actions.handlers.retrieve_token", return_value=AsyncMock(jwt="token123"))
 
-    integration = MagicMock()
-    integration.id = "integration_id"
-
-    trip_summary = await get_trip_summary(
+    trip_summary = await get_detailed_trip_summary(
+        "http://base.url",
         "token123",
         "fancy-subscription-key",
-        "http://base.url",
         "trip1"
     )
-    assert len(trip_summary.locationSummary) == 1
+    assert len(trip_summary.location_summary) == 1
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status_code,exception_type", [
@@ -340,7 +329,7 @@ async def test_get_trip_summary_success(mocker):
     (403, ForbiddenException),
     (500, InternalServerException),
 ])
-async def test_get_trip_summary_http_errors(mocker, status_code, exception_type):
+async def test_get_detailed_trip_summary_http_errors(mocker, status_code, exception_type):
     mocker.patch("asyncio.sleep", new_callable=AsyncMock)
 
     response = _mk_http_error_response(status_code)
@@ -353,14 +342,11 @@ async def test_get_trip_summary_http_errors(mocker, status_code, exception_type)
     client_cm.__aexit__.return_value = False
     mocker.patch("httpx.AsyncClient", return_value=client_cm)
 
-    mocker.patch("app.actions.handlers.retrieve_token",
-                 AsyncMock(return_value=SimpleNamespace(jwt="token123")))
-
     with pytest.raises(exception_type):
-        await get_trip_summary(
+        await get_detailed_trip_summary(
+            "http://base.url",
             "token123",
             "fancy-subscription-key",
-            "http://base.url",
             "trip1"
         )
 

@@ -1,18 +1,16 @@
 import asyncio
 import logging
 import httpx
-
-import app.datasource.ctrack as client
+from app.datasource import ctrackcrystal
 
 from datetime import date, datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import AsyncGenerator, Dict, List, Optional, Tuple
 
 from gundi_core.schemas.v2 import LogLevel, Integration
 from app.actions.configurations import (
     AuthenticateConfig,
     PullObservationsConfig,
     PullVehicleTripsConfig,
-    TriggerFetchVehicleObservationsConfig,
     get_auth_config
 )
 from app.services.activity_logger import activity_logger, log_action_activity
@@ -47,10 +45,23 @@ async def with_ctrack_semaphore(integration_id: str, coro):
         return await coro
 
 
-CTC_BASE_URL = "https://apim.ctrackcrystal.com/api"
+
 INVALID_TRIP_ID = "0"
 MAX_TOKEN_DISPLAY_LENGTH = 100
 MAX_PULL_LOOKBACK_DAYS = 3
+PROCESSED_TRIPS_MAX_AGE_DAYS = 14
+
+
+def _prune_processed_trips(
+    processed_trips: Dict[str, datetime],
+    max_age_days: int = PROCESSED_TRIPS_MAX_AGE_DAYS,
+    now: Optional[datetime] = None,
+) -> Dict[str, datetime]:
+    """Return a copy with only entries whose trip_end_time is within the last max_age_days."""
+    if not processed_trips:
+        return {}
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=max_age_days)
+    return {trip_id: t for trip_id, t in processed_trips.items() if t >= cutoff}
 
 
 def date_range(start_date: date, end_date: date):
@@ -70,7 +81,7 @@ def date_range(start_date: date, end_date: date):
         current += timedelta(days=1)
 
 
-def transform(observation: client.LocationSummary, vehicle: PullVehicleTripsConfig) -> dict:
+def transform(observation: ctrackcrystal.LocationSummary, vehicle: PullVehicleTripsConfig) -> dict:
     additional_info = {
         key: value for key, value in observation.dict().items() if value and key not in ["eventTime", "latitude", "longitude"]
     }
@@ -92,57 +103,72 @@ def transform(observation: client.LocationSummary, vehicle: PullVehicleTripsConf
 
 
 async def _fetch_one_vehicle_trips_observations(
-    token: client.LoginResponse,
+    token: ctrackcrystal.LoginResponse,
     auth_config: AuthenticateConfig,
     base_url: str,
     action_config: PullVehicleTripsConfig,
     integration_id: str = "",
-) -> Tuple[List[dict], int]:
+    processed_trips: Optional[Dict[str, datetime]] = None,
+) -> AsyncGenerator[ctrackcrystal.LocationSummary, None]:
     """
-    Fetch trips and trip summaries for one vehicle/filter_day and return transformed observations.
-    Does not send to Gundi or save state. Caller must hold Ctrack semaphore if limiting concurrency.
-    Returns (transformed_data, observations_count). Raises client.TooManyRequestsException on 429.
+    Fetch trips and trip summaries for one vehicle/filter_day; yield each observation (LocationSummary).
+    Caller should transform yielded observations to the Gundi model. Does not send to Gundi or save state.
+    Caller must hold Ctrack semaphore if limiting concurrency.
+    If processed_trips (mutable dict) is passed, trips already in it with stored trip_end_time >= current are skipped,
+    and each fetched trip is recorded as processed_trips[trip_id] = trip_end_time.
+    Raises ctrackcrystal.TooManyRequestsException on 429.
     """
-    transformed_data: List[dict] = []
-    trips_response = await client.get_vehicle_trips(
+    trips_response = await ctrackcrystal.get_trips(
+        base_url,
         token.jwt,
         auth_config.subscription_key.get_secret_value(),
-        base_url,
-        action_config.vehicle_id,
-        action_config.filter_day,
+        [action_config.vehicle_id],
+        action_config.filter_day.date(),
     )
     if not trips_response:
         logger.warning(
             f"No trips response returned for vehicle {action_config.vehicle_id} on {action_config.filter_day.date()}"
         )
-        return [], 0
+        return
 
     for trip in trips_response.payload:
         for trip_detail in trip.details:
+            '''
+            Skip trips with an invalid trip ID.
+            
+            Skip trips that are already in the processed_trips dictionary.
+            '''
+            # Skip trips with an invalid trip ID.
+
             if trip_detail.trip_id == INVALID_TRIP_ID:
                 logger.info(
                     f"Skipping trip detail date {trip_detail.date} for vehicle {action_config.vehicle_id} (tripId is 0)"
                 )
                 continue
-            if action_config.vehicle_last_updated and trip_detail.trip_end_time <= action_config.vehicle_last_updated:
-                logger.info(
-                    f"Trip {trip_detail.trip_id} for vehicle {action_config.vehicle_id} is already processed. Skipping..."
-                )
-                continue
+
+            # Skip trips that are already processed.
+            if processed_trips is not None and trip_detail.trip_id in processed_trips and trip_detail.trip_end_time is not None:
+                stored = processed_trips[trip_detail.trip_id]
+                if stored >= trip_detail.trip_end_time:
+                    logger.info(
+                        f"Trip {trip_detail.trip_id} for vehicle {action_config.vehicle_id} already in processed_trips. Skipping DetailedTripSummary..."
+                    )
+                    continue
+
             logger.info(
                 f"Getting trip summary for trip {trip_detail.trip_id} vehicle {action_config.vehicle_id} to extract observations..."
             )
-            trip_summary = await client.get_trip_summary(
+            trip_summary = await ctrackcrystal.get_detailed_trip_summary(
+                base_url,
                 token.jwt,
                 auth_config.subscription_key.get_secret_value(),
-                base_url,
                 trip_detail.trip_id,
             )
             if trip_summary:
-                transformed_data.extend([
-                    transform(observation, action_config)
-                    for observation in trip_summary.locationSummary
-                ])
+                for observation in trip_summary.location_summary:
+                    yield observation
+                if processed_trips is not None and trip_detail.trip_end_time is not None:
+                    processed_trips[trip_detail.trip_id] = trip_detail.trip_end_time
             else:
                 logger.warning(
                     f"-- No trip summary returned for trip {trip_detail.trip_id} Vehicle ID {action_config.vehicle_id} --"
@@ -156,13 +182,11 @@ async def _fetch_one_vehicle_trips_observations(
                         data={"vehicle_id": action_config.vehicle_id, "trip_id": trip_detail.trip_id},
                     )
 
-    return transformed_data, len(transformed_data)
 
-
-async def retrieve_token(integration: Integration, base_url: str) -> client.LoginResponse:
+async def retrieve_token(integration: Integration, base_url: str) -> ctrackcrystal.LoginResponse:
     """
     Helper function to retrieve token from state or CTC API.
-    May raise client.TooManyRequestsException after retries if the API returns 429.
+    May raise ctrackcrystal.TooManyRequestsException after retries if the API returns 429.
     """
     saved_token = await state_manager.get_state(
         str(integration.id),
@@ -174,14 +198,16 @@ async def retrieve_token(integration: Integration, base_url: str) -> client.Logi
     if not saved_token:
         auth_config = get_auth_config(integration)
         logger.info(f"-- Getting token for integration ID: {integration.id} Username: {auth_config.username} --")
-        token = await client.get_token(
+        token = await ctrackcrystal.login(
             base_url,
             auth_config.username,
             auth_config.password.get_secret_value(),
             auth_config.subscription_key.get_secret_value()
         )
+        if token is None:
+            raise RuntimeError("Failed to obtain token (check credentials).")
     else:
-        token = client.LoginResponse.parse_obj(saved_token)
+        token = ctrackcrystal.LoginResponse.parse_obj(saved_token)
 
     # Check if token is expired or about to expire in the next 5 minutes
     if datetime.now(timezone.utc) >= token.valid_to_utc - timedelta(minutes=5):
@@ -189,18 +215,23 @@ async def retrieve_token(integration: Integration, base_url: str) -> client.Logi
             auth_config = get_auth_config(integration)
         logger.info(f"-- Refreshing token for integration ID: {integration.id} --")
         try:
-            token = await client.refresh_token(
+            new_token = await ctrackcrystal.refresh_token(
                 base_url,
                 token.jwt,
                 auth_config.subscription_key.get_secret_value()
             )
-        except client.ForbiddenException:
-            token = await client.get_token(
+            if new_token is not None:
+                token = new_token
+            # else keep existing token and re-save below
+        except ctrackcrystal.ForbiddenException:
+            token = await ctrackcrystal.login(
                 base_url,
                 auth_config.username,
                 auth_config.password.get_secret_value(),
                 auth_config.subscription_key.get_secret_value()
             )
+            if token is None:
+                raise RuntimeError("Failed to obtain token after refresh (check credentials).")
 
     await state_manager.set_state(
         str(integration.id),
@@ -217,8 +248,8 @@ async def action_auth(integration, action_config: AuthenticateConfig):
 
     try:
         logger.info(f"-- Getting token for integration ID: {integration.id} Username: {action_config.username} --")
-        token_response = await client.get_token(
-            CTC_BASE_URL,
+        token_response = await ctrackcrystal.login(
+            ctrackcrystal.BASE_URL,
             action_config.username,
             action_config.password.get_secret_value(),
             action_config.subscription_key.get_secret_value()
@@ -228,11 +259,11 @@ async def action_auth(integration, action_config: AuthenticateConfig):
             return {"valid_credentials": True, "token": token}
         logger.warning(f"-- Login failed for integration ID: {integration.id} Username: {action_config.username} --")
         return {"valid_credentials": False, "message": "Failed to retrieve token"}
-    except client.UnauthorizedException as e:
+    except ctrackcrystal.UnauthorizedException as e:
         return {"valid_credentials": False, "status_code": e.status_code, "message": "Unauthorized access (bad username and/or password)"}
-    except client.TooManyRequestsException as e:
+    except ctrackcrystal.TooManyRequestsException as e:
         return {"status": "error", "status_code": 429, "message": "Ctrack Crystal API rate limit exceeded. Try again later."}
-    except client.InternalServerException as e:
+    except ctrackcrystal.InternalServerException as e:
         return {"status": "error", "status_code": e.status_code, "message": "Internal server error at Ctrack Crystal"}
     except httpx.HTTPStatusError as e:
         return {"status": "error", "status_code": e.response.status_code, "message": str(e)}
@@ -246,7 +277,7 @@ async def action_pull_observations(integration: Integration, action_config: Pull
     vehicles_processed = 0
     vehicles_failed = 0
     total_observations = 0
-    base_url = integration.base_url or CTC_BASE_URL
+    base_url = integration.base_url or ctrackcrystal.BASE_URL
     auth_config = get_auth_config(integration)
 
     try:
@@ -255,7 +286,7 @@ async def action_pull_observations(integration: Integration, action_config: Pull
         logger.info(f"-- Getting vehicles for integration ID: {integration.id} --")
         vehicles_response = await with_ctrack_semaphore(
             integration.id,
-            client.get_vehicles(token.jwt, auth_config.subscription_key.get_secret_value(), base_url),
+            ctrackcrystal.get_vehicles(base_url, token.jwt, auth_config.subscription_key.get_secret_value()),
         )
 
         if not vehicles_response:
@@ -276,13 +307,20 @@ async def action_pull_observations(integration: Integration, action_config: Pull
             try:
                 logger.info(f"Fetching trips for vehicle {vehicle.id} to extract observations...")
 
-                vehicle_last_updated: Optional[datetime] = None
                 vehicle_state = await state_manager.get_state(
                     integration_id=integration.id,
                     action_id="pull_observations",
                     source_id=vehicle.id,
                 )
                 vehicle_updated_at = vehicle_state.get("updated_at") if vehicle_state else None
+                raw_processed = vehicle_state.get("processed_trips", {}) if vehicle_state else {}
+                processed_trips: Dict[str, datetime] = {}
+                for tid, tstr in raw_processed.items():
+                    try:
+                        t = datetime.fromisoformat(tstr).replace(tzinfo=timezone.utc)
+                        processed_trips[tid] = t
+                    except (TypeError, ValueError):
+                        pass
                 now = datetime.now(timezone.utc)
                 min_filter_day = datetime.combine(
                     (now - timedelta(days=MAX_PULL_LOOKBACK_DAYS)).date(),
@@ -291,34 +329,37 @@ async def action_pull_observations(integration: Integration, action_config: Pull
                 today = datetime.combine(now.date(), datetime.min.time()).replace(tzinfo=timezone.utc)
 
                 if vehicle_updated_at:
-                    vehicle_last_updated = datetime.fromisoformat(vehicle_updated_at).replace(tzinfo=timezone.utc)
-                    start_filter_day = max(vehicle_last_updated, min_filter_day)
+                    last_updated = datetime.fromisoformat(vehicle_updated_at).replace(tzinfo=timezone.utc)
+                    start_filter_day = max(last_updated, min_filter_day)
                     start_filter_day = datetime.combine(start_filter_day.date(), datetime.min.time()).replace(tzinfo=timezone.utc)
-                    logger.info(f"Vehicle {vehicle.id} last processed at {vehicle_last_updated.isoformat()}. Fetching trips from {start_filter_day.date()} to {today.date()} (capped at {MAX_PULL_LOOKBACK_DAYS} days lookback)...")
+                    logger.info(f"Vehicle {vehicle.id} last updated at {last_updated.isoformat()}. Fetching trips from {start_filter_day.date()} to {today.date()} (capped at {MAX_PULL_LOOKBACK_DAYS} days lookback)...")
                 else:
                     start_filter_day = now - timedelta(days=1)
                     start_filter_day = datetime.combine(start_filter_day.date(), datetime.min.time()).replace(tzinfo=timezone.utc)
-                    logger.info(f"Vehicle {vehicle.id} has no last processed date. Fetching trips from yesterday...")
+                    logger.info(f"Vehicle {vehicle.id} has no last updated date. Fetching trips from yesterday...")
 
-                # Fix C: Multi-day catchup — loop through all days from start_filter_day to today
+                # Multi-day catchup — loop through all days from start_filter_day to today
                 vehicle_obs_count = 0
                 for filter_day in date_range(start_filter_day.date(), today.date()):
                     parsed_config = PullVehicleTripsConfig(
                         vehicle_id=vehicle.id,
                         vehicle_serial_number=vehicle.serial_number,
                         vehicle_display_name=vehicle.display_name,
-                        vehicle_last_updated=vehicle_last_updated,
                         filter_day=filter_day,
                         save_vehicle_state=True,
                     )
 
                     async def _fetch_this_vehicle():
-                        return await _fetch_one_vehicle_trips_observations(
+                        transformed = []
+                        async for observation in _fetch_one_vehicle_trips_observations(
                             token, auth_config, base_url, parsed_config,
                             integration_id=str(integration.id),
-                        )
+                            processed_trips=processed_trips,
+                        ):
+                            transformed.append(transform(observation, parsed_config))
+                        return transformed
 
-                    transformed_data, obs_count = await with_ctrack_semaphore(integration.id, _fetch_this_vehicle())
+                    transformed_data = await with_ctrack_semaphore(integration.id, _fetch_this_vehicle())
 
                     if transformed_data:
                         logger.info(
@@ -330,31 +371,29 @@ async def action_pull_observations(integration: Integration, action_config: Pull
                             total_observations += len(response)
                             vehicle_obs_count += len(response)
                         latest_time = max(transformed_data, key=lambda obs: obs["recorded_at"])["recorded_at"]
+                        pruned = _prune_processed_trips(processed_trips, now=now)
                         await state_manager.set_state(
                             integration_id=integration.id,
                             action_id="pull_observations",
-                            state={"updated_at": latest_time.isoformat()},
+                            state={
+                                "updated_at": latest_time.isoformat(),
+                                "processed_trips": {k: v.isoformat() for k, v in pruned.items()},
+                            },
                             source_id=vehicle.id,
                         )
                     else:
                         logger.info(f"No new observations for vehicle {vehicle.id} on {filter_day.date()}")
-                        # Fix A: Advance state to end-of-day so next run queries the next day
-                        end_of_day = filter_day + timedelta(hours=23, minutes=59, seconds=59)
-                        if not vehicle_last_updated or end_of_day > vehicle_last_updated:
-                            await state_manager.set_state(
-                                integration_id=integration.id,
-                                action_id="pull_observations",
-                                state={"updated_at": end_of_day.isoformat()},
-                                source_id=vehicle.id,
-                            )
-                        # # Location 4: Log when no trips found for a vehicle on a day
-                        # await log_action_activity(
-                        #     integration_id=str(integration.id),
-                        #     action_id="pull_observations",
-                        #     title=f"Vehicle {vehicle.id}: 0 observations on {filter_day.date()}",
-                        #     level=LogLevel.WARNING,
-                        #     data={"vehicle_id": vehicle.id, "filter_day": str(filter_day.date())},
-                        # )
+                        # Advance state to this day so next run knows we've considered it
+                        pruned = _prune_processed_trips(processed_trips, now=now)
+                        await state_manager.set_state(
+                            integration_id=integration.id,
+                            action_id="pull_observations",
+                            state={
+                                "updated_at": filter_day.isoformat(),
+                                "processed_trips": {k: v.isoformat() for k, v in pruned.items()},
+                            },
+                            source_id=vehicle.id,
+                        )
 
                 vehicles_processed += 1
 
@@ -368,7 +407,7 @@ async def action_pull_observations(integration: Integration, action_config: Pull
                 )
 
             # Fix B: Per-vehicle exception isolation
-            except client.TooManyRequestsException:
+            except ctrackcrystal.TooManyRequestsException:
                 # Re-raise rate limits — these affect all vehicles, not just this one
                 raise
             except Exception as e:
@@ -392,7 +431,7 @@ async def action_pull_observations(integration: Integration, action_config: Pull
         )
 
         return {"status": "success", "vehicles_processed": vehicles_processed, "vehicles_failed": vehicles_failed, "observations_extracted": total_observations}
-    except client.TooManyRequestsException:
+    except ctrackcrystal.TooManyRequestsException:
         logger.warning("Rate limit (429) from Ctrack Crystal API")
         raise
     except Exception as e:
@@ -401,71 +440,39 @@ async def action_pull_observations(integration: Integration, action_config: Pull
 
 
 @activity_logger()
-async def action_trigger_fetch_vehicle_observations(integration, action_config: TriggerFetchVehicleObservationsConfig):
-    logger.info(f"Executing 'trigger_fetch_vehicle_observations' action with integration ID {integration.id} and action_config {action_config}...")
-
-    base_url = integration.base_url or CTC_BASE_URL
-    auth_config = get_auth_config(integration)
-    total_observations = 0
-
-    try:
-        token = await with_ctrack_semaphore(integration.id, retrieve_token(integration, base_url))
-        vehicles_response = await with_ctrack_semaphore(
-            integration.id,
-            client.get_vehicles(token.jwt, auth_config.subscription_key.get_secret_value(), base_url),
-        )
-
-        if not vehicles_response:
-            logger.error(f"No valid vehicles found for integration ID {integration.id}, Username: {auth_config.username}")
-            return {"status": "error", "message": "There was an error while retrieving vehicles"}
-
-        vehicle = next((v for v in vehicles_response.vehicles if v.id == action_config.vehicle_id), None)
-        if not vehicle:
-            logger.error(f"Vehicle {action_config.vehicle_id} not found for integration ID {integration.id}, Username: {auth_config.username}")
-            return {"status": "error", "message": f"Vehicle {action_config.vehicle_id} not found"}
-
-        for filter_day in date_range(action_config.start_date, action_config.end_date):
-            logger.info(f"Fetching observations for vehicle {action_config.vehicle_id} on {filter_day}...")
-            parsed_config = PullVehicleTripsConfig(
-                vehicle_id=vehicle.id,
-                vehicle_serial_number=vehicle.serial_number,
-                vehicle_display_name=vehicle.display_name,
-                filter_day=filter_day,
-                save_vehicle_state=False,
-            )
-
-            async def _fetch_for_day():
-                return await _fetch_one_vehicle_trips_observations(
-                    token, auth_config, base_url, parsed_config,
-                    integration_id=str(integration.id),
-                )
-
-            transformed_data, obs_count = await with_ctrack_semaphore(integration.id, _fetch_for_day())
-            if transformed_data:
-                for batch in generate_batches(transformed_data, 200):
-                    response = await send_observations_to_gundi(observations=batch, integration_id=integration.id)
-                    total_observations += len(response)
-
-        return {"status": "success", "vehicle_triggered": True, "observations_extracted": total_observations}
-    except client.TooManyRequestsException:
-        logger.warning("Rate limit (429) from Ctrack Crystal API")
-        return {"status": "error", "message": "API rate limit exceeded.", "status_code": 429}
-
-
-@activity_logger()
 async def action_fetch_vehicle_trips(integration, action_config: PullVehicleTripsConfig):
     logger.info(f"Executing 'action_fetch_vehicle_trips' action with integration ID {integration.id} and action_config {action_config}...")
 
-    base_url = integration.base_url or CTC_BASE_URL
+    base_url = integration.base_url or ctrackcrystal.BASE_URL
     auth_config = get_auth_config(integration)
+
+    vehicle_state = await state_manager.get_state(
+        integration_id=integration.id,
+        action_id="pull_observations",
+        source_id=action_config.vehicle_id,
+    )
+    raw_processed = vehicle_state.get("processed_trips", {}) if vehicle_state else {}
+    processed_trips: Dict[str, datetime] = {}
+    for tid, tstr in raw_processed.items():
+        try:
+            t = datetime.fromisoformat(tstr).replace(tzinfo=timezone.utc)
+            processed_trips[tid] = t
+        except (TypeError, ValueError):
+            pass
 
     async def _do_fetch():
         token = await retrieve_token(integration, base_url)
         logger.info(f"-- Getting vehicle trips for integration ID: {integration.id} Vehicle ID: {action_config.vehicle_id} --")
-        return await _fetch_one_vehicle_trips_observations(token, auth_config, base_url, action_config, integration_id=str(integration.id))
+        transformed = []
+        async for observation in _fetch_one_vehicle_trips_observations(
+            token, auth_config, base_url, action_config, integration_id=str(integration.id),
+            processed_trips=processed_trips,
+        ):
+            transformed.append(transform(observation, action_config))
+        return transformed
 
     try:
-        transformed_data, _ = await with_ctrack_semaphore(integration.id, _do_fetch())
+        transformed_data = await with_ctrack_semaphore(integration.id, _do_fetch())
 
         if transformed_data:
             logger.info(f"Extracted {len(transformed_data)} observations for vehicle {action_config.vehicle_id} from {action_config.filter_day.strftime('%Y-%m-%d')}")
@@ -477,17 +484,21 @@ async def action_fetch_vehicle_trips(integration, action_config: PullVehicleTrip
 
             if action_config.save_vehicle_state:
                 latest_time = max(transformed_data, key=lambda obs: obs["recorded_at"])["recorded_at"]
+                pruned = _prune_processed_trips(processed_trips)
                 await state_manager.set_state(
                     integration_id=integration.id,
                     action_id="pull_observations",
-                    state={"updated_at": latest_time.isoformat()},
+                    state={
+                        "updated_at": latest_time.isoformat(),
+                        "processed_trips": {k: v.isoformat() for k, v in pruned.items()},
+                    },
                     source_id=action_config.vehicle_id,
                 )
             return {"observations_extracted": observations_extracted}
         else:
             logger.info(f"No new observations to extract for vehicle {action_config.vehicle_id}")
             return {"observations_extracted": 0}
-    except client.TooManyRequestsException:
+    except ctrackcrystal.TooManyRequestsException:
         message = f"Rate limit (429) from Ctrack Crystal API for vehicle {action_config.vehicle_id}"
         logger.warning(message)
         await log_action_activity(
