@@ -1,8 +1,8 @@
 """
-CLI for the Ctrack Crystal API datasource.
+CLI for the Ctrack Crystal API using the ctrackcrystal client.
 
 Run with:
-  python -m app.cli.ctrack [OPTIONS] COMMAND [ARGS]
+  python -m app.cli.ctrackcrystal [OPTIONS] COMMAND [ARGS]
 
 Credentials can be passed via options or environment variables:
   CTRACK_BASE_URL, CTRACK_USERNAME, CTRACK_PASSWORD, CTRACK_SUBSCRIPTION_KEY
@@ -10,13 +10,11 @@ Credentials can be passed via options or environment variables:
 import asyncio
 import json
 import os
-from datetime import datetime
-
 import click
 
-from app.datasource import ctrack
+from app.datasource import ctrackcrystal
 
-DEFAULT_BASE_URL = "https://apim.ctrackcrystal.com/api"
+DEFAULT_BASE_URL = ctrackcrystal.BASE_URL
 
 
 def _get_credentials(base_url, username, password, subscription_key):
@@ -35,10 +33,10 @@ def _get_credentials(base_url, username, password, subscription_key):
 
 async def _get_token(base_url, username, password, subscription_key):
     """Obtain JWT token; raise on failure."""
-    login = await ctrack.get_token(base_url, username, password, subscription_key)
-    if login is None:
+    login_resp = await ctrackcrystal.login(base_url, username, password, subscription_key)
+    if login_resp is None:
         raise click.ClickException("Failed to obtain token (check credentials).")
-    return login.jwt
+    return login_resp.jwt
 
 
 @click.group()
@@ -47,7 +45,7 @@ async def _get_token(base_url, username, password, subscription_key):
     envvar="CTRACK_BASE_URL",
     default=DEFAULT_BASE_URL,
     show_default=True,
-    help="Ctrack API base URL.",
+    help="Ctrack Crystal API base URL (without /api).",
 )
 @click.option("--username", envvar="CTRACK_USERNAME", help="API username.")
 @click.option("--password", envvar="CTRACK_PASSWORD", help="API password.")
@@ -58,28 +56,24 @@ async def _get_token(base_url, username, password, subscription_key):
 )
 @click.pass_context
 def cli(ctx, base_url, username, password, subscription_key):
-    """Query Ctrack Crystal API for vehicles and trip data."""
-    try:
-        ctx.obj = _get_credentials(base_url, username, password, subscription_key)
-    except click.UsageError as e:
-        raise click.UsageError(str(e)) from e
+    """Query Ctrack Crystal API for vehicles and trip data (ctrackcrystal client)."""
+    ctx.obj = (base_url, username, password, subscription_key)
 
 
 @cli.command("vehicles")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
 @click.pass_obj
 def cmd_vehicles(creds, as_json):
-    """List all vehicles."""
-    base_url, username, password, subscription_key = creds
+    """List all vehicles (GetVehicles)."""
+    base_url, username, password, subscription_key = _get_credentials(*creds)
 
     async def run():
         token = await _get_token(base_url, username, password, subscription_key)
-        resp = await ctrack.get_vehicles(token, subscription_key, base_url)
-        return resp
+        return await ctrackcrystal.get_vehicles(base_url, token, subscription_key)
 
     try:
         resp = asyncio.run(run())
-    except ctrack.ClientBaseException as e:
+    except ctrackcrystal.ClientBaseException as e:
         raise click.ClickException(f"API error: {e}") from e
 
     if as_json:
@@ -89,38 +83,45 @@ def cmd_vehicles(creds, as_json):
 
     click.echo(f"Vehicles ({resp.count}):")
     for v in resp.vehicles:
+        last = v.last_reported_time.isoformat() if v.last_reported_time else "-"
         click.echo(
             f"  {v.id}  {v.display_name}  sn={v.serial_number}  "
-            f"fleet={v.fleet_number or '-'}  reg={v.registration_number or '-'}"
+            f"fleet={v.fleet_number or '-'}  reg={v.registration_number or '-'}  lastReported={last}"
         )
 
 
 @cli.command("trips")
-@click.option("--vehicle-id", required=True, help="Vehicle ID.")
+@click.option(
+    "--vehicle-id",
+    "vehicle_ids",
+    multiple=True,
+    required=True,
+    help="Vehicle ID (can be repeated for batch).",
+)
 @click.option(
     "--date",
     "filter_date",
     required=True,
     type=click.DateTime(formats=["%Y-%m-%d"]),
-    help="Filter day (YYYY-MM-DD).",
+    help="Filter day in UTC (YYYY-MM-DD).",
 )
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
 @click.pass_obj
-def cmd_trips(creds, vehicle_id, filter_date, as_json):
-    """List trips for a vehicle on a given day."""
-    base_url, username, password, subscription_key = creds
-    filter_day = filter_date.replace(tzinfo=None) if filter_date.tzinfo else filter_date
+def cmd_trips(creds, vehicle_ids, filter_date, as_json):
+    """List trips for one or more vehicles on a given UTC day (Vehicle/Trips batch)."""
+    base_url, username, password, subscription_key = _get_credentials(*creds)
+    vehicle_ids_list = list(vehicle_ids)
+    filter_day = filter_date.date()
 
     async def run():
         token = await _get_token(base_url, username, password, subscription_key)
-        resp = await ctrack.get_vehicle_trips(
-            token, subscription_key, base_url, vehicle_id, filter_day
+        return await ctrackcrystal.get_trips(
+            base_url, token, subscription_key, vehicle_ids_list, filter_day
         )
-        return resp
 
     try:
         resp = asyncio.run(run())
-    except ctrack.ClientBaseException as e:
+    except ctrackcrystal.ClientBaseException as e:
         raise click.ClickException(f"API error: {e}") from e
 
     if as_json:
@@ -131,7 +132,7 @@ def cmd_trips(creds, vehicle_id, filter_date, as_json):
         click.echo(json.dumps(data, default=str, indent=2))
         return
 
-    click.echo(f"Trips for vehicle {vehicle_id} on {filter_day.date()} ({resp.count}):")
+    click.echo(f"Trips for {len(vehicle_ids_list)} vehicle(s) on {filter_day} ({resp.count}):")
     for t in resp.payload:
         click.echo(f"  Trip id={t.id}  distance={t.total_distance}  max_speed={t.max_speed}")
         for d in t.details:
@@ -146,28 +147,28 @@ def cmd_trips(creds, vehicle_id, filter_date, as_json):
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
 @click.pass_obj
 def cmd_trip_summary(creds, trip_id, as_json):
-    """Fetch detailed trip summary (location points) for a trip."""
-    base_url, username, password, subscription_key = creds
+    """Fetch detailed trip summary (location points) for a trip (DetailedTripSummary)."""
+    base_url, username, password, subscription_key = _get_credentials(*creds)
 
     async def run():
         token = await _get_token(base_url, username, password, subscription_key)
-        resp = await ctrack.get_trip_summary(
-            token, subscription_key, base_url, trip_id
+        return await ctrackcrystal.get_detailed_trip_summary(
+            base_url, token, subscription_key, trip_id
         )
-        return resp
 
     try:
         resp = asyncio.run(run())
-    except ctrack.ClientBaseException as e:
+    except ctrackcrystal.ClientBaseException as e:
         raise click.ClickException(f"API error: {e}") from e
 
+    points = resp.location_summary
     if as_json:
-        data = {"locationSummary": [p.dict() for p in resp.locationSummary]}
+        data = {"locationSummary": [p.dict() for p in points]}
         click.echo(json.dumps(data, default=str, indent=2))
         return
 
-    click.echo(f"Trip summary for {trip_id} ({len(resp.locationSummary)} points):")
-    for p in resp.locationSummary:
+    click.echo(f"Trip summary for {trip_id} ({len(points)} points):")
+    for p in points:
         click.echo(
             f"  {p.event_time}  lat={p.latitude} lon={p.longitude}  "
             f"speed={p.speed}  heading={p.heading}  {p.event_text or ''}"

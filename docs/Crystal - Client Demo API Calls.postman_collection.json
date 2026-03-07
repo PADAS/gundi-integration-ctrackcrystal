@@ -1,0 +1,1013 @@
+{
+	"info": {
+		"_postman_id": "84524eef-e152-4366-9227-be8bbae0828b",
+		"name": "Crystal - Client Demo API Calls",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Authenticate/Login",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"X-Token Setting\", function () {\r",
+							"    pm.response.to.have.status(200);\r",
+							"    var jsonData = pm.response.json();\r",
+							"    pm.environment.unset(\"x-token\");\r",
+							"    pm.environment.set(\"x-token\", jsonData.jwt);\r",
+							"});\r",
+							""
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"type": "text",
+						"value": "application/json"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{Ocp-Apim-Subscription-Key}}",
+						"type": "default"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n  \"username\": \"{{user}}\",\r\n  \"password\": \"{{password}}\"\r\n}"
+				},
+				"url": {
+					"raw": "{{api}}/api/Authenticate/Login",
+					"host": [
+						"{{api}}"
+					],
+					"path": [
+						"api",
+						"Authenticate",
+						"Login"
+					]
+				},
+				"description": "get all vehicles"
+			},
+			"response": []
+		},
+		{
+			"name": "Authenticate/RefreshToken",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							""
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"X-Token Setting\", function () {\r",
+							"    pm.response.to.have.status(200);\r",
+							"    var jsonData = pm.response.json();\r",
+							"    pm.globals.unset(\"x-token\");\r",
+							"    pm.globals.set(\"x-token\", jsonData.jwt);\r",
+							"});\r",
+							""
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"type": "text",
+						"value": "application/json"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{Ocp-Apim-Subscription-Key}}",
+						"type": "default"
+					},
+					{
+						"key": "x-token",
+						"value": "{{x-token}}",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "{{api}}/api/Authenticate/RefreshToken",
+					"host": [
+						"{{api}}"
+					],
+					"path": [
+						"api",
+						"Authenticate",
+						"RefreshToken"
+					]
+				},
+				"description": "get all vehicles"
+			},
+			"response": []
+		},
+		{
+			"name": "Location_GetLocationsByIds",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"var now = Date.now();\r",
+							"var expires = pm.environment.get(\"x-tokentime\");\r",
+							"var token = pm.environment.get(\"x-token\");\r",
+							"var email = pm.environment.get(\"myemail\");\r",
+							"var apiforauth = pm.environment.get(\"apiauth\");\r",
+							"if (!apiforauth)\r",
+							"     apiforauth = pm.environment.get(\"api\");\r",
+							"if (email)\r",
+							"{\r",
+							"    var password = pm.environment.get(\"mypassword\");\r",
+							"    console.log('expired yet?' + (expires < now ) + (typeof expires == 'undefined') + (typeof expires == null) + (token == null || (token == '')) );\r",
+							"    if ((typeof expires == 'undefined') || (typeof expires == null) || (expires < now)) //|| (token == null || (token == '')) )\r",
+							"    {\r",
+							"        console.log('getting new token');\r",
+							"        pm.sendRequest({\r",
+							"            url: apiforauth+'/auth/api/Authentication/AuthenticateUser',\r",
+							"            method: 'POST',\r",
+							"            header: {\r",
+							"                'content-type': 'application/json',\r",
+							"            },\r",
+							"            body: {\r",
+							"                mode: 'raw',\r",
+							"                raw: JSON.stringify({\"userName\":email,\"password\": password,\"applicationName\":\"Clarity Application\"})\r",
+							"            }\r",
+							"        }, function (err, res) {\r",
+							"                var tokenret = res.json().JwtToken;\r",
+							"                if (tokenret)\r",
+							"                {\r",
+							"                    pm.environment.set(\"x-token\", tokenret);\r",
+							"                    pm.globals.set(\"x-tokenGlobal\", tokenret )\r",
+							"                    var expires = now + 60000 * 5;//token should be fine for 5 mins\r",
+							"                    pm.environment.set(\"x-tokentime\", expires);\r",
+							"                    console.log(pm.environment.get(\"x-tokentime\"));\r",
+							"                } else\r",
+							"                {\r",
+							"                    //2fa\r",
+							"                    console.log(\"2fa\");\r",
+							"                }\r",
+							"        });\r",
+							"    }\r",
+							"}\r",
+							"//pm.request.headers.add({key: 'x-token', value: '{{x-token}}' })"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"type": "text",
+						"value": "application/json"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{Ocp-Apim-Subscription-Key}}"
+					},
+					{
+						"key": "x-token",
+						"value": "{{x-token}}",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": ""
+				},
+				"url": {
+					"raw": "{{api}}/api/Location/GetLocations",
+					"host": [
+						"{{api}}"
+					],
+					"path": [
+						"api",
+						"Location",
+						"GetLocations"
+					]
+				},
+				"description": "get all vehicles"
+			},
+			"response": []
+		},
+		{
+			"name": "Queue_Get",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"var now = Date.now();\r",
+							"var expires = pm.environment.get(\"x-tokentime\");\r",
+							"var token = pm.environment.get(\"x-token\");\r",
+							"var email = pm.environment.get(\"myemail\");\r",
+							"var apiforauth = pm.environment.get(\"apiauth\");\r",
+							"if (!apiforauth)\r",
+							"     apiforauth = pm.environment.get(\"api\");\r",
+							"if (email)\r",
+							"{\r",
+							"    var password = pm.environment.get(\"mypassword\");\r",
+							"    console.log('expired yet?' + (expires < now ) + (typeof expires == 'undefined') + (typeof expires == null) + (token == null || (token == '')) );\r",
+							"    if ((typeof expires == 'undefined') || (typeof expires == null) || (expires < now)) //|| (token == null || (token == '')) )\r",
+							"    {\r",
+							"        console.log('getting new token');\r",
+							"        pm.sendRequest({\r",
+							"            url: apiforauth+'/auth/api/Authentication/AuthenticateUser',\r",
+							"            method: 'POST',\r",
+							"            header: {\r",
+							"                'content-type': 'application/json',\r",
+							"            },\r",
+							"            body: {\r",
+							"                mode: 'raw',\r",
+							"                raw: JSON.stringify({\"userName\":email,\"password\": password,\"applicationName\":\"Clarity Application\"})\r",
+							"            }\r",
+							"        }, function (err, res) {\r",
+							"                var tokenret = res.json().JwtToken;\r",
+							"                if (tokenret)\r",
+							"                {\r",
+							"                    pm.environment.set(\"x-token\", tokenret);\r",
+							"                    pm.globals.set(\"x-tokenGlobal\", tokenret )\r",
+							"                    var expires = now + 60000 * 5;//token should be fine for 5 mins\r",
+							"                    pm.environment.set(\"x-tokentime\", expires);\r",
+							"                    console.log(pm.environment.get(\"x-tokentime\"));\r",
+							"                } else\r",
+							"                {\r",
+							"                    //2fa\r",
+							"                    console.log(\"2fa\");\r",
+							"                }\r",
+							"        });\r",
+							"    }\r",
+							"}\r",
+							"//pm.request.headers.add({key: 'x-token', value: '{{x-token}}' })"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"type": "text",
+						"value": "application/json"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{Ocp-Apim-Subscription-Key}}"
+					},
+					{
+						"key": "x-token",
+						"type": "text",
+						"value": "{{x-token}}"
+					}
+				],
+				"url": {
+					"raw": "{{api}}/api/Queue?queueType=Event&limit=1",
+					"host": [
+						"{{api}}"
+					],
+					"path": [
+						"api",
+						"Queue"
+					],
+					"query": [
+						{
+							"key": "queueType",
+							"value": "Event"
+						},
+						{
+							"key": "limit",
+							"value": "1"
+						}
+					]
+				},
+				"description": "get all vehicles"
+			},
+			"response": []
+		},
+		{
+			"name": "Queue_Subscribe",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"var now = Date.now();\r",
+							"var expires = pm.environment.get(\"x-tokentime\");\r",
+							"var token = pm.environment.get(\"x-token\");\r",
+							"var email = pm.environment.get(\"myemail\");\r",
+							"var apiforauth = pm.environment.get(\"apiauth\");\r",
+							"if (!apiforauth)\r",
+							"     apiforauth = pm.environment.get(\"api\");\r",
+							"if (email)\r",
+							"{\r",
+							"    var password = pm.environment.get(\"mypassword\");\r",
+							"    console.log('expired yet?' + (expires < now ) + (typeof expires == 'undefined') + (typeof expires == null) + (token == null || (token == '')) );\r",
+							"    if ((typeof expires == 'undefined') || (typeof expires == null) || (expires < now)) //|| (token == null || (token == '')) )\r",
+							"    {\r",
+							"        console.log('getting new token');\r",
+							"        pm.sendRequest({\r",
+							"            url: apiforauth+'/auth/api/Authentication/AuthenticateUser',\r",
+							"            method: 'POST',\r",
+							"            header: {\r",
+							"                'content-type': 'application/json',\r",
+							"            },\r",
+							"            body: {\r",
+							"                mode: 'raw',\r",
+							"                raw: JSON.stringify({\"userName\":email,\"password\": password,\"applicationName\":\"Clarity Application\"})\r",
+							"            }\r",
+							"        }, function (err, res) {\r",
+							"                var tokenret = res.json().JwtToken;\r",
+							"                if (tokenret)\r",
+							"                {\r",
+							"                    pm.environment.set(\"x-token\", tokenret);\r",
+							"                    pm.globals.set(\"x-tokenGlobal\", tokenret )\r",
+							"                    var expires = now + 60000 * 5;//token should be fine for 5 mins\r",
+							"                    pm.environment.set(\"x-tokentime\", expires);\r",
+							"                    console.log(pm.environment.get(\"x-tokentime\"));\r",
+							"                } else\r",
+							"                {\r",
+							"                    //2fa\r",
+							"                    console.log(\"2fa\");\r",
+							"                }\r",
+							"        });\r",
+							"    }\r",
+							"}\r",
+							"//pm.request.headers.add({key: 'x-token', value: '{{x-token}}' })"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"type": "text",
+						"value": "application/json"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{Ocp-Apim-Subscription-Key}}"
+					},
+					{
+						"key": "x-token",
+						"type": "text",
+						"value": "{{x-token}}"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"QueueType\": \"Event\"\r\n}"
+				},
+				"url": {
+					"raw": "{{api}}/api/Queue/Subscribe",
+					"host": [
+						"{{api}}"
+					],
+					"path": [
+						"api",
+						"Queue",
+						"Subscribe"
+					]
+				},
+				"description": "get all vehicles"
+			},
+			"response": []
+		},
+		{
+			"name": "User_GetDrivers",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"var now = Date.now();\r",
+							"var expires = pm.environment.get(\"x-tokentime\");\r",
+							"var token = pm.environment.get(\"x-token\");\r",
+							"var email = pm.environment.get(\"myemail\");\r",
+							"var apiforauth = pm.environment.get(\"apiauth\");\r",
+							"if (!apiforauth)\r",
+							"     apiforauth = pm.environment.get(\"api\");\r",
+							"if (email)\r",
+							"{\r",
+							"    var password = pm.environment.get(\"mypassword\");\r",
+							"    console.log('expired yet?' + (expires < now ) + (typeof expires == 'undefined') + (typeof expires == null) + (token == null || (token == '')) );\r",
+							"    if ((typeof expires == 'undefined') || (typeof expires == null) || (expires < now)) //|| (token == null || (token == '')) )\r",
+							"    {\r",
+							"        console.log('getting new token');\r",
+							"        pm.sendRequest({\r",
+							"            url: apiforauth+'/auth/api/Authentication/AuthenticateUser',\r",
+							"            method: 'POST',\r",
+							"            header: {\r",
+							"                'content-type': 'application/json',\r",
+							"            },\r",
+							"            body: {\r",
+							"                mode: 'raw',\r",
+							"                raw: JSON.stringify({\"userName\":email,\"password\": password,\"applicationName\":\"Clarity Application\"})\r",
+							"            }\r",
+							"        }, function (err, res) {\r",
+							"                var tokenret = res.json().JwtToken;\r",
+							"                if (tokenret)\r",
+							"                {\r",
+							"                    pm.environment.set(\"x-token\", tokenret);\r",
+							"                    pm.globals.set(\"x-tokenGlobal\", tokenret )\r",
+							"                    var expires = now + 60000 * 5;//token should be fine for 5 mins\r",
+							"                    pm.environment.set(\"x-tokentime\", expires);\r",
+							"                    console.log(pm.environment.get(\"x-tokentime\"));\r",
+							"                } else\r",
+							"                {\r",
+							"                    //2fa\r",
+							"                    console.log(\"2fa\");\r",
+							"                }\r",
+							"        });\r",
+							"    }\r",
+							"}\r",
+							"//pm.request.headers.add({key: 'x-token', value: '{{x-token}}' })"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"type": "text",
+						"value": "application/json"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{Ocp-Apim-Subscription-Key}}"
+					},
+					{
+						"key": "x-token",
+						"type": "text",
+						"value": "{{x-token}}"
+					}
+				],
+				"url": {
+					"raw": "{{api}}/api/User/GetDrivers",
+					"host": [
+						"{{api}}"
+					],
+					"path": [
+						"api",
+						"User",
+						"GetDrivers"
+					]
+				},
+				"description": "get all vehicles"
+			},
+			"response": []
+		},
+		{
+			"name": "User_GetUsers",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"var now = Date.now();\r",
+							"var expires = pm.environment.get(\"x-tokentime\");\r",
+							"var token = pm.environment.get(\"x-token\");\r",
+							"var email = pm.environment.get(\"myemail\");\r",
+							"var apiforauth = pm.environment.get(\"apiauth\");\r",
+							"if (!apiforauth)\r",
+							"     apiforauth = pm.environment.get(\"api\");\r",
+							"if (email)\r",
+							"{\r",
+							"    var password = pm.environment.get(\"mypassword\");\r",
+							"    console.log('expired yet?' + (expires < now ) + (typeof expires == 'undefined') + (typeof expires == null) + (token == null || (token == '')) );\r",
+							"    if ((typeof expires == 'undefined') || (typeof expires == null) || (expires < now)) //|| (token == null || (token == '')) )\r",
+							"    {\r",
+							"        console.log('getting new token');\r",
+							"        pm.sendRequest({\r",
+							"            url: apiforauth+'/auth/api/Authentication/AuthenticateUser',\r",
+							"            method: 'POST',\r",
+							"            header: {\r",
+							"                'content-type': 'application/json',\r",
+							"            },\r",
+							"            body: {\r",
+							"                mode: 'raw',\r",
+							"                raw: JSON.stringify({\"userName\":email,\"password\": password,\"applicationName\":\"Clarity Application\"})\r",
+							"            }\r",
+							"        }, function (err, res) {\r",
+							"                var tokenret = res.json().JwtToken;\r",
+							"                if (tokenret)\r",
+							"                {\r",
+							"                    pm.environment.set(\"x-token\", tokenret);\r",
+							"                    pm.globals.set(\"x-tokenGlobal\", tokenret )\r",
+							"                    var expires = now + 60000 * 5;//token should be fine for 5 mins\r",
+							"                    pm.environment.set(\"x-tokentime\", expires);\r",
+							"                    console.log(pm.environment.get(\"x-tokentime\"));\r",
+							"                } else\r",
+							"                {\r",
+							"                    //2fa\r",
+							"                    console.log(\"2fa\");\r",
+							"                }\r",
+							"        });\r",
+							"    }\r",
+							"}\r",
+							"//pm.request.headers.add({key: 'x-token', value: '{{x-token}}' })"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"type": "text",
+						"value": "application/json"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{Ocp-Apim-Subscription-Key}}"
+					},
+					{
+						"key": "x-token",
+						"type": "text",
+						"value": "{{x-token}}"
+					}
+				],
+				"url": {
+					"raw": "{{api}}/api/User/GetUsers",
+					"host": [
+						"{{api}}"
+					],
+					"path": [
+						"api",
+						"User",
+						"GetUsers"
+					]
+				},
+				"description": "get all vehicles"
+			},
+			"response": []
+		},
+		{
+			"name": "Vehicle_DetailedTripSummary",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"var now = Date.now();\r",
+							"var expires = pm.environment.get(\"x-tokentime\");\r",
+							"var token = pm.environment.get(\"x-token\");\r",
+							"var email = pm.environment.get(\"myemail\");\r",
+							"var apiforauth = pm.environment.get(\"apiauth\");\r",
+							"if (!apiforauth)\r",
+							"     apiforauth = pm.environment.get(\"api\");\r",
+							"if (email)\r",
+							"{\r",
+							"    var password = pm.environment.get(\"mypassword\");\r",
+							"    console.log('expired yet?' + (expires < now ) + (typeof expires == 'undefined') + (typeof expires == null) + (token == null || (token == '')) );\r",
+							"    if ((typeof expires == 'undefined') || (typeof expires == null) || (expires < now)) //|| (token == null || (token == '')) )\r",
+							"    {\r",
+							"        console.log('getting new token');\r",
+							"        pm.sendRequest({\r",
+							"            url: apiforauth+'/auth/api/Authentication/AuthenticateUser',\r",
+							"            method: 'POST',\r",
+							"            header: {\r",
+							"                'content-type': 'application/json',\r",
+							"            },\r",
+							"            body: {\r",
+							"                mode: 'raw',\r",
+							"                raw: JSON.stringify({\"userName\":email,\"password\": password,\"applicationName\":\"Clarity Application\"})\r",
+							"            }\r",
+							"        }, function (err, res) {\r",
+							"                var tokenret = res.json().JwtToken;\r",
+							"                if (tokenret)\r",
+							"                {\r",
+							"                    pm.environment.set(\"x-token\", tokenret);\r",
+							"                    pm.globals.set(\"x-tokenGlobal\", tokenret )\r",
+							"                    var expires = now + 60000 * 5;//token should be fine for 5 mins\r",
+							"                    pm.environment.set(\"x-tokentime\", expires);\r",
+							"                    console.log(pm.environment.get(\"x-tokentime\"));\r",
+							"                } else\r",
+							"                {\r",
+							"                    //2fa\r",
+							"                    console.log(\"2fa\");\r",
+							"                }\r",
+							"        });\r",
+							"    }\r",
+							"}\r",
+							"//pm.request.headers.add({key: 'x-token', value: '{{x-token}}' })"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"type": "text",
+						"value": "application/json"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{Ocp-Apim-Subscription-Key}}"
+					},
+					{
+						"key": "x-token",
+						"type": "text",
+						"value": "{{x-token}}"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": ""
+				},
+				"url": {
+					"raw": "{{api}}/api/Vehicle/DetailedTripSummary/:tripid",
+					"host": [
+						"{{api}}"
+					],
+					"path": [
+						"api",
+						"Vehicle",
+						"DetailedTripSummary",
+						":tripid"
+					],
+					"variable": [
+						{
+							"key": "tripid",
+							"value": "CTOS-NX12-0356601060033946-1679909933000"
+						}
+					]
+				},
+				"description": "get all vehicles"
+			},
+			"response": []
+		},
+		{
+			"name": "Vehicle_EventSummaries",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"var now = Date.now();\r",
+							"var expires = pm.environment.get(\"x-tokentime\");\r",
+							"var token = pm.environment.get(\"x-token\");\r",
+							"var email = pm.environment.get(\"myemail\");\r",
+							"var apiforauth = pm.environment.get(\"apiauth\");\r",
+							"if (!apiforauth)\r",
+							"     apiforauth = pm.environment.get(\"api\");\r",
+							"if (email)\r",
+							"{\r",
+							"    var password = pm.environment.get(\"mypassword\");\r",
+							"    console.log('expired yet?' + (expires < now ) + (typeof expires == 'undefined') + (typeof expires == null) + (token == null || (token == '')) );\r",
+							"    if ((typeof expires == 'undefined') || (typeof expires == null) || (expires < now)) //|| (token == null || (token == '')) )\r",
+							"    {\r",
+							"        console.log('getting new token');\r",
+							"        pm.sendRequest({\r",
+							"            url: apiforauth+'/auth/api/Authentication/AuthenticateUser',\r",
+							"            method: 'POST',\r",
+							"            header: {\r",
+							"                'content-type': 'application/json',\r",
+							"            },\r",
+							"            body: {\r",
+							"                mode: 'raw',\r",
+							"                raw: JSON.stringify({\"userName\":email,\"password\": password,\"applicationName\":\"Clarity Application\"})\r",
+							"            }\r",
+							"        }, function (err, res) {\r",
+							"                var tokenret = res.json().JwtToken;\r",
+							"                if (tokenret)\r",
+							"                {\r",
+							"                    pm.environment.set(\"x-token\", tokenret);\r",
+							"                    pm.globals.set(\"x-tokenGlobal\", tokenret )\r",
+							"                    var expires = now + 60000 * 5;//token should be fine for 5 mins\r",
+							"                    pm.environment.set(\"x-tokentime\", expires);\r",
+							"                    console.log(pm.environment.get(\"x-tokentime\"));\r",
+							"                } else\r",
+							"                {\r",
+							"                    //2fa\r",
+							"                    console.log(\"2fa\");\r",
+							"                }\r",
+							"        });\r",
+							"    }\r",
+							"}\r",
+							"//pm.request.headers.add({key: 'x-token', value: '{{x-token}}' })"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"type": "text",
+						"value": "application/json"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{Ocp-Apim-Subscription-Key}}"
+					},
+					{
+						"key": "x-token",
+						"type": "text",
+						"value": "{{x-token}}"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"ids\": [\"VEHICLE-NA-2F76D488-57B5-478C-9ADB-DA0B043BCC23\"]\r\n}"
+				},
+				"url": {
+					"raw": "{{api}}/api/Vehicle/EventSummaries?filterDay=2023-05-24",
+					"host": [
+						"{{api}}"
+					],
+					"path": [
+						"api",
+						"Vehicle",
+						"EventSummaries"
+					],
+					"query": [
+						{
+							"key": "filterDay",
+							"value": "2023-05-24"
+						}
+					]
+				},
+				"description": "get all vehicles"
+			},
+			"response": []
+		},
+		{
+			"name": "Vehicle_GetVehicles",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							""
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"type": "text",
+						"value": "application/json"
+					},
+					{
+						"key": "x-token",
+						"type": "text",
+						"value": "{{x-token}}"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{Ocp-Apim-Subscription-Key}}"
+					}
+				],
+				"url": {
+					"raw": "{{api}}/api/Vehicle/GetVehicles",
+					"host": [
+						"{{api}}"
+					],
+					"path": [
+						"api",
+						"Vehicle",
+						"GetVehicles"
+					]
+				},
+				"description": "get all vehicles"
+			},
+			"response": []
+		},
+		{
+			"name": "Vehicle_LastDevicePosition",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"var now = Date.now();\r",
+							"var expires = pm.environment.get(\"x-tokentime\");\r",
+							"var token = pm.environment.get(\"x-token\");\r",
+							"var email = pm.environment.get(\"myemail\");\r",
+							"var apiforauth = pm.environment.get(\"apiauth\");\r",
+							"if (!apiforauth)\r",
+							"     apiforauth = pm.environment.get(\"api\");\r",
+							"if (email)\r",
+							"{\r",
+							"    var password = pm.environment.get(\"mypassword\");\r",
+							"    console.log('expired yet?' + (expires < now ) + (typeof expires == 'undefined') + (typeof expires == null) + (token == null || (token == '')) );\r",
+							"    if ((typeof expires == 'undefined') || (typeof expires == null) || (expires < now)) //|| (token == null || (token == '')) )\r",
+							"    {\r",
+							"        console.log('getting new token');\r",
+							"        pm.sendRequest({\r",
+							"            url: apiforauth+'/auth/api/Authentication/AuthenticateUser',\r",
+							"            method: 'POST',\r",
+							"            header: {\r",
+							"                'content-type': 'application/json',\r",
+							"            },\r",
+							"            body: {\r",
+							"                mode: 'raw',\r",
+							"                raw: JSON.stringify({\"userName\":email,\"password\": password,\"applicationName\":\"Clarity Application\"})\r",
+							"            }\r",
+							"        }, function (err, res) {\r",
+							"                var tokenret = res.json().JwtToken;\r",
+							"                if (tokenret)\r",
+							"                {\r",
+							"                    pm.environment.set(\"x-token\", tokenret);\r",
+							"                    pm.globals.set(\"x-tokenGlobal\", tokenret )\r",
+							"                    var expires = now + 60000 * 5;//token should be fine for 5 mins\r",
+							"                    pm.environment.set(\"x-tokentime\", expires);\r",
+							"                    console.log(pm.environment.get(\"x-tokentime\"));\r",
+							"                } else\r",
+							"                {\r",
+							"                    //2fa\r",
+							"                    console.log(\"2fa\");\r",
+							"                }\r",
+							"        });\r",
+							"    }\r",
+							"}\r",
+							"//pm.request.headers.add({key: 'x-token', value: '{{x-token}}' })"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"type": "text",
+						"value": "application/json"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{Ocp-Apim-Subscription-Key}}"
+					},
+					{
+						"key": "x-token",
+						"type": "text",
+						"value": "{{x-token}}"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"ids\": [\"VEHICLE-NA-2F76D488-57B5-478C-9ADB-DA0B043BCC23\"]\r\n}"
+				},
+				"url": {
+					"raw": "{{api}}/api/Vehicle/LastDevicePosition",
+					"host": [
+						"{{api}}"
+					],
+					"path": [
+						"api",
+						"Vehicle",
+						"LastDevicePosition"
+					]
+				},
+				"description": "get all vehicles"
+			},
+			"response": []
+		},
+		{
+			"name": "Vehicle_Trips",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"var now = Date.now();\r",
+							"var expires = pm.environment.get(\"x-tokentime\");\r",
+							"var token = pm.environment.get(\"x-token\");\r",
+							"var email = pm.environment.get(\"myemail\");\r",
+							"var apiforauth = pm.environment.get(\"apiauth\");\r",
+							"if (!apiforauth)\r",
+							"     apiforauth = pm.environment.get(\"api\");\r",
+							"if (email)\r",
+							"{\r",
+							"    var password = pm.environment.get(\"mypassword\");\r",
+							"    console.log('expired yet?' + (expires < now ) + (typeof expires == 'undefined') + (typeof expires == null) + (token == null || (token == '')) );\r",
+							"    if ((typeof expires == 'undefined') || (typeof expires == null) || (expires < now)) //|| (token == null || (token == '')) )\r",
+							"    {\r",
+							"        console.log('getting new token');\r",
+							"        pm.sendRequest({\r",
+							"            url: apiforauth+'/auth/api/Authentication/AuthenticateUser',\r",
+							"            method: 'POST',\r",
+							"            header: {\r",
+							"                'content-type': 'application/json',\r",
+							"            },\r",
+							"            body: {\r",
+							"                mode: 'raw',\r",
+							"                raw: JSON.stringify({\"userName\":email,\"password\": password,\"applicationName\":\"Clarity Application\"})\r",
+							"            }\r",
+							"        }, function (err, res) {\r",
+							"                var tokenret = res.json().JwtToken;\r",
+							"                if (tokenret)\r",
+							"                {\r",
+							"                    pm.environment.set(\"x-token\", tokenret);\r",
+							"                    pm.globals.set(\"x-tokenGlobal\", tokenret )\r",
+							"                    var expires = now + 60000 * 5;//token should be fine for 5 mins\r",
+							"                    pm.environment.set(\"x-tokentime\", expires);\r",
+							"                    console.log(pm.environment.get(\"x-tokentime\"));\r",
+							"                } else\r",
+							"                {\r",
+							"                    //2fa\r",
+							"                    console.log(\"2fa\");\r",
+							"                }\r",
+							"        });\r",
+							"    }\r",
+							"}\r",
+							"//pm.request.headers.add({key: 'x-token', value: '{{x-token}}' })"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"type": "text",
+						"value": "application/json"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{Ocp-Apim-Subscription-Key}}"
+					},
+					{
+						"key": "x-token",
+						"type": "text",
+						"value": "{{x-token}}"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"ids\": [\"VEHICLE-NA-5CAC666D-0361-4460-82AD-1329ABCE3C1F\", \"VEHICLE-NA-CTOS-NX35-CF9E0430B1CE8BF4\"]\r\n}"
+				},
+				"url": {
+					"raw": "{{api}}/api/Vehicle/Trips?filterDay=2023-03-27",
+					"host": [
+						"{{api}}"
+					],
+					"path": [
+						"api",
+						"Vehicle",
+						"Trips"
+					],
+					"query": [
+						{
+							"key": "filterDay",
+							"value": "2023-03-27"
+						}
+					]
+				},
+				"description": "get all vehicles"
+			},
+			"response": []
+		}
+	]
+}

@@ -1,8 +1,6 @@
 import pydantic
 
 from datetime import date, datetime
-from typing import Optional
-
 from app.actions.core import AuthActionConfiguration, PullActionConfiguration, InternalActionConfiguration, ExecutableActionMixin
 from app.services.errors import ConfigurationNotFound
 from app.services.utils import find_config_for_action, FieldWithUIOptions, UIOptions, GlobalUISchemaOptions
@@ -41,35 +39,10 @@ class AuthenticateConfig(AuthActionConfiguration, ExecutableActionMixin):
 class PullObservationsConfig(PullActionConfiguration):
     pass
 
-
-class TriggerFetchVehicleObservationsConfig(PullActionConfiguration, ExecutableActionMixin):
-    start_date: date = FieldWithUIOptions(
-        title="Start Date",
-        description="The start date for pulling vehicle observations (inclusive)"
-    )
-    end_date: date = FieldWithUIOptions(
-        title="End Date",
-        description="The end date for pulling vehicle observations (inclusive)"
-    )
-    vehicle_id: str = FieldWithUIOptions(
-        title="Vehicle ID",
-        description="Fetch observations for this vehicle ID"
-    )
-
-    ui_global_options: GlobalUISchemaOptions = GlobalUISchemaOptions(
-        order=[
-            "start_date",
-            "end_date",
-            "vehicle_id"
-        ],
-    )
-
-
 class PullVehicleTripsConfig(InternalActionConfiguration):
     vehicle_id: str
     vehicle_serial_number: str
     vehicle_display_name: str
-    vehicle_last_updated: Optional[datetime] = None
     filter_day: datetime
     save_vehicle_state: bool = True
 
