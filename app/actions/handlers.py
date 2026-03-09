@@ -434,6 +434,16 @@ async def action_pull_observations(integration: Integration, action_config: Pull
     except ctrackcrystal.TooManyRequestsException:
         logger.warning("Rate limit (429) from Ctrack Crystal API")
         raise
+    except (ctrackcrystal.UnauthorizedException, ctrackcrystal.ForbiddenException) as e:
+        logger.error(f"Authentication failed for integration ID {integration.id}, username: {auth_config.username}: {e}")
+        await log_action_activity(
+            integration_id=str(integration.id),
+            action_id="pull_observations",
+            title="Authentication failed: check credentials in the portal",
+            level=LogLevel.ERROR,
+            data={"error": str(e), "username": auth_config.username},
+        )
+        raise
     except Exception as e:
         logger.error(f"Failed to process vehicles from integration ID {integration.id}, username: {auth_config.username}")
         raise e
@@ -507,6 +517,16 @@ async def action_fetch_vehicle_trips(integration, action_config: PullVehicleTrip
             level=LogLevel.ERROR,
             title=f"Rate limit exceeded fetching trips for vehicle {action_config.vehicle_id}.",
             data={"message": message, "data": action_config}
+        )
+        return {"observations_extracted": 0}
+    except (ctrackcrystal.UnauthorizedException, ctrackcrystal.ForbiddenException) as e:
+        logger.error(f"Authentication failed for integration ID {integration.id}: {e}")
+        await log_action_activity(
+            integration_id=integration.id,
+            action_id="pull_observations",
+            level=LogLevel.ERROR,
+            title="Authentication failed: check credentials in the portal",
+            data={"error": str(e)},
         )
         return {"observations_extracted": 0}
     except Exception as e:
