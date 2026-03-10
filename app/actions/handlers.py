@@ -397,14 +397,15 @@ async def action_pull_observations(integration: Integration, action_config: Pull
 
                 vehicles_processed += 1
 
-                # Location 2: Per-vehicle results
-                await log_action_activity(
-                    integration_id=str(integration.id),
-                    action_id="pull_observations",
-                    title=f"Vehicle {vehicle.id}: {vehicle_obs_count} observations from {start_filter_day.date()} to {today.date()}",
-                    level=LogLevel.INFO,
-                    data={"vehicle_id": vehicle.id, "start_day": str(start_filter_day.date()), "end_day": str(today.date()), "observations": vehicle_obs_count},
-                )
+                # Location 2: Per-vehicle results (only log when there are observations, unless overridden)
+                if vehicle_obs_count > 0 or action_config.log_all_vehicle_activity:
+                    await log_action_activity(
+                        integration_id=str(integration.id),
+                        action_id="pull_observations",
+                        title=f"Vehicle {vehicle.id}: {vehicle_obs_count} observations from {start_filter_day.date()} to {today.date()}",
+                        level=LogLevel.INFO,
+                        data={"vehicle_id": vehicle.id, "start_day": str(start_filter_day.date()), "end_day": str(today.date()), "observations": vehicle_obs_count},
+                    )
 
             # Fix B: Per-vehicle exception isolation
             except ctrackcrystal.TooManyRequestsException:
