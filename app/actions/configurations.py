@@ -7,6 +7,9 @@ from app.services.utils import find_config_for_action, FieldWithUIOptions, UIOpt
 
 
 class AuthenticateConfig(AuthActionConfiguration, ExecutableActionMixin):
+    '''
+    Authentication settings for the Ctrack Crystal integration.
+    '''
     subscription_key: pydantic.SecretStr = FieldWithUIOptions(
         title="Ctrack Crystal Subscription Key",
         description="A valid Ctrack Crystal API subscription key",
@@ -37,7 +40,14 @@ class AuthenticateConfig(AuthActionConfiguration, ExecutableActionMixin):
 
 
 class PullObservationsConfig(PullActionConfiguration):
-    pass
+    '''
+    Configuration settings for fetching data from Ctrack Crystal.
+    '''
+    log_all_vehicle_activity: bool = FieldWithUIOptions(
+        False,
+        title="Log All Vehicle Request Activity",
+        description="Log an activity record for every vehicle, even when no new observations are found",
+    )
 
 class PullVehicleTripsConfig(InternalActionConfiguration):
     vehicle_id: str
