@@ -1,1 +1,2 @@
 # Add your integration-specific dependencies here
+backoff~=2.2.0  # imported by the connector; it only reached the lockfile before as a transitive dependency of gundi-client-v2 2.x
